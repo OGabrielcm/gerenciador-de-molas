@@ -1,3 +1,4 @@
+import { completionTransition } from "../archive-logic";
 // Kernel do KanbanProvider: entidades (cards/tracks/trilhas/columns) +
 // estado de UI (filter/selectedAreaIds/collapsed/search/createOpen/loading) +
 // efeito de load + TODAS as ações que tocam essas entidades. Mantido junto DE
@@ -47,6 +48,8 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
   const [selectedAreaIds, setSelectedAreaIds] = useState<string[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [organizing, setOrganizing] = useState(false);
+  const organizationLock = useRef(false);
 
   const {
     activitiesByCard,
@@ -181,6 +184,90 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
   // deps array é `[]` e estável — não há o que esquecer de listar.
   const actions = useMemo(
     () => ({
+      reorderTracks: async (ids: string[]) => {
+        if (organizationLock.current) throw new Error("Operation in progress");
+        const actingUser = currentUserIdRef.current;
+        organizationLock.current = true;
+        setOrganizing(true);
+        try {
+          const expected = stateRef.current.tracks.map((track) => track.id);
+          const { data, error } = await kanbanRepo.reorderTracks(ids, expected);
+          if (currentUserIdRef.current !== actingUser) throw new Error("Session changed");
+          if (error || !data) throw new Error("Unable to save area order");
+          setTracks(data.map(rowToTrack));
+        } finally {
+          organizationLock.current = false;
+          setOrganizing(false);
+        }
+      },
+      archiveDone: async (areaId: string, ids: string[]) => {
+        if (organizationLock.current) throw new Error("Operation in progress");
+        const actingUser = currentUserIdRef.current;
+        organizationLock.current = true;
+        setOrganizing(true);
+        try {
+          const { data, error } = await kanbanRepo.archiveDone(areaId, ids);
+          if (currentUserIdRef.current !== actingUser) throw new Error("Session changed");
+          if (error || !data || data.length !== ids.length)
+            throw new Error("Unable to archive selection");
+          const updated = new Map<string, Card>(
+            data.map((row: Record<string, unknown>) => {
+              const card = rowToCard(row);
+              return [card.id, card];
+            }),
+          );
+          setCards((current) =>
+            current.map((card) =>
+              updated.has(card.id)
+                ? {
+                    ...card,
+                    manual_archived_at: updated.get(card.id)!.manual_archived_at,
+                    archive_snoozed_until: updated.get(card.id)!.archive_snoozed_until,
+                    done_at: updated.get(card.id)!.done_at,
+                  }
+                : card,
+            ),
+          );
+          return ids;
+        } finally {
+          organizationLock.current = false;
+          setOrganizing(false);
+        }
+      },
+      restoreArchived: async (ids: string[]) => {
+        if (organizationLock.current) throw new Error("Operation in progress");
+        const actingUser = currentUserIdRef.current;
+        organizationLock.current = true;
+        setOrganizing(true);
+        try {
+          const { data, error } = await kanbanRepo.restoreArchived(ids);
+          if (currentUserIdRef.current !== actingUser) throw new Error("Session changed");
+          if (error || !data || data.length !== ids.length)
+            throw new Error("Unable to restore selection");
+          const updated = new Map<string, Card>(
+            data.map((row: Record<string, unknown>) => {
+              const card = rowToCard(row);
+              return [card.id, card];
+            }),
+          );
+          setCards((current) =>
+            current.map((card) =>
+              updated.has(card.id)
+                ? {
+                    ...card,
+                    manual_archived_at: updated.get(card.id)!.manual_archived_at,
+                    archive_snoozed_until: updated.get(card.id)!.archive_snoozed_until,
+                    done_at: updated.get(card.id)!.done_at,
+                  }
+                : card,
+            ),
+          );
+        } finally {
+          organizationLock.current = false;
+          setOrganizing(false);
+        }
+      },
+
       addCard: async (data: Parameters<KanbanCtx["addCard"]>[0]) => {
         const userId = await kanbanRepo.getUserId();
         if (!userId) return;
@@ -212,9 +299,13 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       updateCard: async (id: string, patch: Partial<Card>) => {
         const now = new Date().toISOString();
         const before = stateRef.current.cards.find((c) => c.id === id);
-        setCards((cur) => cur.map((c) => (c.id === id ? { ...c, ...patch, updated_at: now } : c)));
+        const transition = completionTransition(before, patch.col, now);
+        setCards((cur) =>
+          cur.map((c) => (c.id === id ? { ...c, ...patch, ...transition, updated_at: now } : c)),
+        );
         const { error: updateError } = await kanbanRepo.tasks.update(id, {
           ...patch,
+          ...transition,
           updated_at: now,
         });
         if (updateError) {
@@ -265,14 +356,15 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
           targetTrack,
           col,
         );
-        const patch: Partial<Card> = { col, order: newOrder, updated_at: now };
+        const patch: Partial<Card> = {
+          col,
+          order: newOrder,
+          updated_at: now,
+          ...completionTransition(before, col, now),
+        };
         if (track) patch.track = track;
         setCards((cur) =>
-          cur.map((c) =>
-            c.id === id
-              ? { ...c, col, track: track ?? c.track, order: newOrder, updated_at: now }
-              : c,
-          ),
+          cur.map((c) => (c.id === id ? { ...c, ...patch, track: track ?? c.track } : c)),
         );
         const { error: moveError } = await kanbanRepo.tasks.update(id, patch);
         if (moveError) {
@@ -300,11 +392,19 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
         setCards((cur) =>
           cur.map((c) =>
             c.id === id
-              ? { ...c, col: result.col, track: result.track, order: result.order, updated_at: now }
+              ? {
+                  ...c,
+                  col: result.col,
+                  track: result.track,
+                  order: result.order,
+                  updated_at: now,
+                  ...completionTransition(card, result.col, now),
+                }
               : c,
           ),
         );
         const { error: reorderError } = await kanbanRepo.tasks.update(id, {
+          ...completionTransition(card, result.col, now),
           col: result.col,
           track: result.track,
           order: result.order,
@@ -346,6 +446,9 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
         const tempId = crypto.randomUUID();
         const newCard: Card = {
           ...original,
+          done_at: original.col === "done" ? now : null,
+          manual_archived_at: null,
+          archive_snoozed_until: null,
           id: tempId,
           title: `${original.title} (copy)`,
           starred: false,
@@ -566,6 +669,7 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       selectedAreaIds,
       setSelectedAreaIds,
       loading,
+      organizing,
       createOpen,
       setCreateOpen,
       templates,
@@ -587,6 +691,7 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       selectedAreaIds,
       createOpen,
       loading,
+      organizing,
       templates,
       cardColors,
       activitiesByCard,

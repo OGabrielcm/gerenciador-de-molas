@@ -1,3 +1,4 @@
+import { RestoreArchivedButton } from "@/components/kanban/ArchiveDoneButton";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Archive, Search, Trash2, Download, ChevronDown } from "lucide-react";
@@ -558,6 +559,7 @@ function DashboardsPage() {
                         )}
                       </td>
                       <td className="px-3 py-2 text-right">
+                        {archived && <RestoreArchivedButton ids={[c.id]} />}
                         <button
                           onClick={() => setOpenId(c.id)}
                           className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"

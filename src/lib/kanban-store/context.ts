@@ -38,6 +38,10 @@ export interface KanbanCtx {
   selectedAreaIds: string[];
   setSelectedAreaIds: Dispatch<SetStateAction<string[]>>;
   loading: boolean;
+  organizing: boolean;
+  reorderTracks: (ids: string[]) => Promise<void>;
+  archiveDone: (areaId: string, ids: string[]) => Promise<string[]>;
+  restoreArchived: (ids: string[]) => Promise<void>;
   addCard: (data: AddInput) => void;
   updateCard: (id: string, patch: Partial<Card>) => void;
   moveCard: (id: string, col: ColumnId, track?: TrackId) => void;

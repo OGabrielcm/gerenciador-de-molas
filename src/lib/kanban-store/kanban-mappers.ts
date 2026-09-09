@@ -20,6 +20,9 @@ export function rowToCard(row: Record<string, unknown>): Card {
     blocked_by: (row.blocked_by as string[]) ?? [],
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
+    done_at: row.done_at as string | null | undefined,
+    manual_archived_at: row.manual_archived_at as string | null | undefined,
+    archive_snoozed_until: row.archive_snoozed_until as string | null | undefined,
   };
 }
 

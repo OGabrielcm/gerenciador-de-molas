@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "test:e2e": "dotenv -e .env.test -- npx playwright test",
     "test:e2e:ui": "dotenv -e .env.test -- npx playwright test --ui",
-    "test:portfolio": "playwright test --config playwright.portfolio.config.ts"
+    "test:portfolio": "playwright test --config playwright.portfolio.config.ts",
+    "test:database": "node tests/integration/run-postgres.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

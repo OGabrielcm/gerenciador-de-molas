@@ -26,7 +26,7 @@ export const kanbanRepo = {
     const [cards, trilhas, tracks, columns] = await Promise.all([
       supabase.from("tasks").select("*").order("created_at"),
       supabase.from("trilhas").select("*").order("created_at"),
-      supabase.from("tracks").select("*").order("order"),
+      supabase.from("tracks").select("*").order("order").order("id"),
       supabase.from("columns").select("*").order("order"),
     ]);
     return {
@@ -38,6 +38,11 @@ export const kanbanRepo = {
   },
 
   getUserId,
+  reorderTracks: (ids: string[], expected: string[]) =>
+    supabase.rpc("reorder_areas", { ordered_ids: ids, expected_ids: expected }),
+  archiveDone: (areaId: string, ids: string[]) =>
+    supabase.rpc("archive_done_area", { area_id: areaId, expected_ids: ids }),
+  restoreArchived: (ids: string[]) => supabase.rpc("restore_archived_tasks", { task_ids: ids }),
 
   tasks: {
     insert: (card: Card, userId: string) =>

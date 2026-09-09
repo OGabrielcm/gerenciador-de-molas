@@ -28,6 +28,10 @@ Not implemented: realtime subscriptions. Do not describe the board as realtime c
 
 Repository history provides change-level attribution. A detailed statement of Gabriel's individual contribution is pending confirmation; this overview does not claim exclusive authorship.
 
+### Area organization and completed tasks
+
+The current development branch supports persistent area reordering and manual archiving of Done cards, with confirmation, Undo and restoration from Dashboards. These functions require the [versioned database migration and lifecycle contract](docs/board-organization.md). Existing deployments are not automatically updated by this branch.
+
 ### Local interface checks without a real account
 
 ```bash

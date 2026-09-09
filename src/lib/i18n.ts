@@ -1,6 +1,23 @@
 export type Locale = "pt" | "en";
 
 const pt = {
+  move_area: "Mover área",
+  drag_area: "Arrastar área",
+  move_area_up: "Mover área para cima",
+  move_area_down: "Mover área para baixo",
+  area_order_saved: "Ordem das áreas salva.",
+  organization_failed:
+    "Não foi possível salvar. Confira a conexão e recarregue o quadro antes de tentar novamente.",
+  archive_done: "Arquivar concluídos",
+  nothing_to_archive: "Nenhum concluído para arquivar",
+  archive_confirmation:
+    "cards concluídos desta área serão arquivados, incluindo os ocultos por filtros. O conteúdo e o histórico serão preservados. Você poderá restaurá-los pelo Dashboards.",
+  archive_saved: "Concluídos arquivados.",
+  archive_restored: "Cards restaurados por mais sete dias.",
+  restore_archive: "Restaurar",
+  undo_archive: "Desfazer",
+  organization_saving: "Salvando…",
+
   // ── Tipos de card ──
   task: "Tarefa",
   goal: "Meta",
@@ -273,6 +290,23 @@ const pt = {
 } as const;
 
 const en = {
+  move_area: "Move area",
+  drag_area: "Drag area",
+  move_area_up: "Move area up",
+  move_area_down: "Move area down",
+  area_order_saved: "Area order saved.",
+  organization_failed:
+    "Could not save. Check your connection and reload the board before trying again.",
+  archive_done: "Archive completed",
+  nothing_to_archive: "No completed tasks to archive",
+  archive_confirmation:
+    "completed cards in this area will be archived, including cards hidden by filters. Content and history will be preserved. You can restore them from Dashboards.",
+  archive_saved: "Completed cards archived.",
+  archive_restored: "Cards restored for another seven days.",
+  restore_archive: "Restore",
+  undo_archive: "Undo",
+  organization_saving: "Saving…",
+
   // ── Card types ──
   task: "Task",
   goal: "Goal",

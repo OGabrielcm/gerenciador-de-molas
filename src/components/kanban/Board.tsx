@@ -1,17 +1,12 @@
+import { toast } from "sonner";
+import { AreaOrderControls } from "./AreaOrderControls";
+import { ArchiveDoneButton } from "./ArchiveDoneButton";
+import { moveArea } from "@/lib/area-order";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Plus, Tags, ChevronDown, Layers, Archive, Columns, SlidersHorizontal } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import { Link } from "@tanstack/react-router";
-import {
-  ARCHIVE_AFTER_DAYS,
-  Card,
-  Column,
-  ColumnId,
-  isArchived,
-  Track,
-  TrackId,
-  Trilha,
-} from "@/lib/kanban-types";
+import { Card, Column, ColumnId, isArchived, Track, TrackId, Trilha } from "@/lib/kanban-types";
 import { useKanban } from "@/lib/kanban-store";
 import { getVisibleTracks } from "@/lib/kanban-store/kanban-logic";
 import { useTheme } from "@/components/theme-provider";
@@ -278,8 +273,7 @@ export function Board() {
             >
               <span className="inline-flex items-center gap-2">
                 <Archive className="h-3.5 w-3.5" />
-                {archivedCount} {archivedCount === 1 ? t("archived_one") : t("archived_many")} (
-                {t("done_since")} {ARCHIVE_AFTER_DAYS} {t("done_since_days")})
+                {archivedCount} {archivedCount === 1 ? t("archived_one") : t("archived_many")}
               </span>
               <span className="text-foreground/70">{t("see_dashboards")}</span>
             </Link>
@@ -609,6 +603,7 @@ function Swimlane({
   onDelete?: (id: string) => void;
 }) {
   const { theme } = useTheme();
+  const { tracks, reorderTracks, organizing } = useKanban();
   const { t } = useLocale();
   const inProgress = cards.filter((c) => c.col === "inprogress").length;
   const bg = track.darkBg;
@@ -618,14 +613,39 @@ function Swimlane({
     <section
       id={`track-${track.id}`}
       data-track={track.id}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("application/x-molas-area")) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }
+      }}
+      onDrop={async (event) => {
+        const source = event.dataTransfer.getData("application/x-molas-area");
+        if (!source) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (organizing || source === track.id) return;
+        try {
+          await reorderTracks(
+            moveArea(
+              tracks.map((area) => area.id),
+              source,
+              track.id,
+            ),
+          );
+          toast.success(t("area_order_saved"));
+        } catch {
+          toast.error(t("organization_failed"));
+        }
+      }}
       className="overflow-hidden rounded-xl border"
       style={{ borderLeft: `3px solid ${track.border}` }}
     >
       <div
-        className="flex items-center gap-2 rounded-t-xl px-3"
+        className="flex flex-wrap items-center gap-2 rounded-t-xl px-3"
         style={{ backgroundColor: bg, color: fg }}
       >
-        <h2 className="min-w-0 flex-1">
+        <h2 className="min-w-0 basis-full sm:basis-auto sm:flex-1">
           <button
             type="button"
             onClick={onToggleCollapsed}
@@ -650,6 +670,7 @@ function Swimlane({
             />
           </button>
         </h2>
+        <AreaOrderControls areaId={track.id} name={track.name} />
         <button
           type="button"
           onClick={onOpenColumns}
@@ -719,6 +740,18 @@ function Swimlane({
                     </span>
                   </div>
                 </div>
+                {col.id === "done" && (
+                  <ArchiveDoneButton
+                    areaId={track.id}
+                    areaName={track.name}
+                    ids={allCards
+                      .filter(
+                        (card) =>
+                          card.track === track.id && card.col === "done" && !isArchived(card),
+                      )
+                      .map((card) => card.id)}
+                  />
+                )}
                 <div className="flex flex-1 flex-col gap-2 px-2 pb-2">
                   {colCards.map((c) => (
                     <CardDropZone

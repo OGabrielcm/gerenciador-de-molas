@@ -1,7 +1,7 @@
 import type { BrowserContext } from "@playwright/test";
 export async function installFixture(
   context: BrowserContext,
-  { theme = "dark", empty = false } = {},
+  { theme = "dark", empty = false, completed = false } = {},
 ) {
   const user = {
     id: "11111111-1111-4111-8111-111111111111",
@@ -62,6 +62,15 @@ export async function installFixture(
           updated_at: "2026-09-09T12:00:00Z",
         },
       ];
+  if (completed)
+    tasks.push({
+      ...tasks[0],
+      id: "done-1",
+      col: "done",
+      title: "Concluído de demonstração",
+      updated_at: new Date().toISOString(),
+      done_at: new Date().toISOString(),
+    });
   const tables: Record<string, unknown> = {
     tracks,
     columns,
@@ -75,7 +84,28 @@ export async function installFixture(
     const url = new URL(req.url());
     let data;
     if (url.pathname.startsWith("/auth/")) data = user;
-    else {
+    else if (url.pathname.includes("/rpc/")) {
+      const body = req.postDataJSON();
+      writes.push({ table: url.pathname.split("/").pop()!, method: req.method() });
+      if (url.pathname.endsWith("reorder_areas")) {
+        const ordered = body.ordered_ids as string[];
+        for (const row of tracks) row.order = ordered.indexOf(row.id);
+        tracks.sort((a, b) => a.order - b.order);
+        data = tracks;
+      } else if (url.pathname.endsWith("archive_done_area")) {
+        data = tasks.filter((row) => body.expected_ids.includes(row.id));
+        for (const row of data as Record<string, unknown>[]) {
+          row.manual_archived_at = new Date().toISOString();
+          row.archive_snoozed_until = null;
+        }
+      } else {
+        data = tasks.filter((row) => body.task_ids.includes(row.id));
+        for (const row of data as Record<string, unknown>[]) {
+          row.manual_archived_at = null;
+          row.archive_snoozed_until = new Date(Date.now() + 7 * 86400000).toISOString();
+        }
+      }
+    } else {
       const name = url.pathname.split("/")[3];
       if (req.method() === "GET") data = tables[name] ?? [];
       else {

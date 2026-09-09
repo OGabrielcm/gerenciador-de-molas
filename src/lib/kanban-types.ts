@@ -49,6 +49,9 @@ export interface Card {
   blocked_by: string[]; // ids de cards que bloqueiam este card
   created_at: string;
   updated_at: string;
+  done_at?: string | null;
+  manual_archived_at?: string | null;
+  archive_snoozed_until?: string | null;
 }
 
 export interface Column {
@@ -628,9 +631,11 @@ export const ARCHIVE_AFTER_DAYS = 7;
 
 export function isArchived(card: Card): boolean {
   if (card.col !== "done") return false;
-  const updated = new Date(card.updated_at).getTime();
-  const cutoff = Date.now() - ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
-  return updated < cutoff;
+  if (card.manual_archived_at) return true;
+  if (card.archive_snoozed_until && new Date(card.archive_snoozed_until).getTime() > Date.now())
+    return false;
+  const completed = new Date(card.done_at ?? card.updated_at).getTime();
+  return completed < Date.now() - ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
 }
 
 export type DeadlineStatus = "overdue" | "today" | "soon" | null;
