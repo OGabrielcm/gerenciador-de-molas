@@ -31,6 +31,9 @@ export function Board() {
     columns,
     collapsed,
     search,
+    setSearch,
+    loading,
+    setSelectedAreaIds,
     filter,
     setFilter,
     selectedAreaIds,
@@ -92,6 +95,13 @@ export function Board() {
       return true;
     });
   }, [cards, filter, search, trilhaNameById]);
+
+  const visibleTracks = getVisibleTracks(tracks, filtered, selectedAreaIds, search);
+  const hasActiveFilters = search.trim().length > 0 || filter !== "__all";
+  const noMatches =
+    !loading &&
+    hasActiveFilters &&
+    !filtered.some((card) => visibleTracks.some((track) => track.id === card.track));
 
   const archivedCount = useMemo(() => cards.filter(isArchived).length, [cards]);
 
@@ -155,12 +165,13 @@ export function Board() {
     // dispositivo; o dark não tem shadow base, então não muda nada lá.
     <div className={`flex flex-col${draggingId ? " kb-dragging" : ""}`}>
       {/* Filter bar */}
-      <div className="sticky top-12 z-[5] border-b bg-background/80 px-3 py-2 backdrop-blur sm:px-6">
-        <div className="flex items-center gap-1.5">
+      <div className="sticky top-[52px] z-[5] border-b bg-background/80 px-3 py-2 backdrop-blur sm:px-6">
+        <div className="flex flex-wrap items-center gap-1.5">
           {/* Chip "Todos" */}
           <button
             onClick={() => setFilter("__all")}
-            className="whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors"
+            aria-pressed={filter === "__all"}
+            className="min-h-9 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors"
             style={{
               backgroundColor: filter === "__all" ? "var(--foreground)" : "transparent",
               color: filter === "__all" ? "var(--background)" : "var(--muted-foreground)",
@@ -196,7 +207,8 @@ export function Board() {
           <div className="relative" ref={filterRef}>
             <button
               onClick={() => setFilterOpen((o) => !o)}
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+              aria-expanded={filterOpen}
+              className="min-h-9 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors"
               style={{
                 borderWidth: "0.5px",
                 backgroundColor: filterOpen ? "var(--muted)" : "transparent",
@@ -272,31 +284,60 @@ export function Board() {
               <span className="text-foreground/70">{t("see_dashboards")}</span>
             </Link>
           )}
-          {getVisibleTracks(tracks, filtered, selectedAreaIds, search).map((track) => (
-            <Swimlane
-              key={track.id}
-              track={track}
-              columns={getColumnsForTrack(track.id)}
-              cards={filtered.filter((c) => c.track === track.id)}
-              allCards={cards}
-              trilhas={trilhas}
-              collapsed={collapsed[track.id]}
-              onToggleCollapsed={() => toggleCollapsed(track.id)}
-              onAdd={(col) => setAdding({ col, track: track.id })}
-              onOpenCard={(c) => setOpenCardId(c.id)}
-              onOpenColumns={() => setColumnsOpen(track.id)}
-              draggingId={draggingId}
-              dragOver={dragOver}
-              setDraggingId={setDraggingId}
-              setDragOver={setDragOver}
-              moveCard={moveCard}
-              reorderCard={reorderCard}
-              cardColors={cardColors}
-              onToggleStar={toggleStar}
-              onDelete={deleteCard}
-            />
-          ))}
-          {tracks.length <= 1 && (
+          {loading && (
+            <p role="status" className="py-8 text-center text-sm text-muted-foreground">
+              {t("loading_board")}
+            </p>
+          )}
+          {noMatches && (
+            <div
+              role="status"
+              className="mx-auto flex w-full max-w-lg flex-col items-center gap-3 py-10 text-center"
+            >
+              <h2 className="text-lg font-semibold text-foreground">{t("no_search_results")}</h2>
+              <p className="text-sm leading-6 text-muted-foreground">
+                {t("no_search_results_hint")}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setFilter("__all");
+                  setSelectedAreaIds([]);
+                }}
+                className="min-h-11 rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+              >
+                {t("clear_board_filters")}
+              </button>
+            </div>
+          )}
+          {!loading &&
+            !noMatches &&
+            visibleTracks.map((track) => (
+              <Swimlane
+                key={track.id}
+                track={track}
+                columns={getColumnsForTrack(track.id)}
+                cards={filtered.filter((c) => c.track === track.id)}
+                allCards={cards}
+                trilhas={trilhas}
+                collapsed={collapsed[track.id]}
+                onToggleCollapsed={() => toggleCollapsed(track.id)}
+                onAdd={(col) => setAdding({ col, track: track.id })}
+                onOpenCard={(c) => setOpenCardId(c.id)}
+                onOpenColumns={() => setColumnsOpen(track.id)}
+                draggingId={draggingId}
+                dragOver={dragOver}
+                setDraggingId={setDraggingId}
+                setDragOver={setDragOver}
+                moveCard={moveCard}
+                reorderCard={reorderCard}
+                cardColors={cardColors}
+                onToggleStar={toggleStar}
+                onDelete={deleteCard}
+              />
+            ))}
+          {!loading && !hasActiveFilters && tracks.length <= 1 && (
             <div className="flex flex-col items-center gap-4 rounded-lg border border-dashed py-16 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted text-muted-foreground">
                 <Layers className="h-5 w-5" />
@@ -326,8 +367,8 @@ export function Board() {
               </button>
             </div>
           )}
-          {tracks.length >= 2 && (
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-dashed px-4 py-3 opacity-60 hover:opacity-100 transition-opacity">
+          {!loading && !hasActiveFilters && tracks.length >= 2 && (
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-dashed px-4 py-3">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Layers className="h-3.5 w-3.5" />
                 <p className="text-xs">{t("add_track_hint_desc")}</p>
@@ -580,42 +621,45 @@ function Swimlane({
       className="overflow-hidden rounded-xl border"
       style={{ borderLeft: `3px solid ${track.border}` }}
     >
-      <button
-        onClick={onToggleCollapsed}
-        className="flex w-full items-center justify-between gap-3 rounded-t-xl px-4 py-3 text-left transition-opacity hover:opacity-90"
+      <div
+        className="flex items-center gap-2 rounded-t-xl px-3"
         style={{ backgroundColor: bg, color: fg }}
       >
-        <div className="flex items-center gap-3">
-          <h2
-            className="text-lg font-semibold uppercase"
-            style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
-          >
-            {track.name}
-          </h2>
-          <span className="font-mono text-[11px] opacity-60">
-            {cards.length} {cards.length === 1 ? t("card_label") : t("cards_label")}
-            {inProgress > 0 && ` · ${inProgress} ${t("in_progress_label")}`}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
+        <h2 className="min-w-0 flex-1">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenColumns();
-            }}
-            className="rounded-md p-1.5 opacity-60 hover:opacity-100 transition-opacity"
-            style={{ color: fg }}
-            aria-label={t("columns")}
-            title={t("columns")}
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-expanded={!collapsed}
+            className="flex min-h-14 w-full min-w-0 items-center justify-between gap-3 py-3 text-left hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
           >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <span
+                className="break-words text-lg font-semibold uppercase"
+                style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
+              >
+                {track.name}
+              </span>
+              <span className="font-mono text-[11px] opacity-80">
+                {cards.length} {cards.length === 1 ? t("card_label") : t("cards_label")}
+                {inProgress > 0 && ` · ${inProgress} ${t("in_progress_label")}`}
+              </span>
+            </span>
+            <ChevronDown
+              className="h-4 w-4 shrink-0 transition-transform"
+              style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0)" }}
+            />
           </button>
-          <ChevronDown
-            className="h-4 w-4 transition-transform"
-            style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0)" }}
-          />
-        </div>
-      </button>
+        </h2>
+        <button
+          type="button"
+          onClick={onOpenColumns}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+          aria-label={`${t("columns")}: ${track.name}`}
+          title={t("columns")}
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+        </button>
+      </div>
 
       {!collapsed && (
         <div className="flex gap-3 overflow-x-auto p-3 pb-4">
@@ -658,8 +702,8 @@ function Swimlane({
                 <div className="flex items-center justify-between px-3 pb-2 pt-3">
                   <div className="flex items-center gap-2">
                     <h3
-                      className="font-mono text-xs font-medium uppercase"
-                      style={{ color: fg, letterSpacing: "0.08em" }}
+                      className="font-mono text-xs font-medium uppercase text-foreground"
+                      style={{ letterSpacing: "0.08em" }}
                     >
                       {col.name}
                     </h3>

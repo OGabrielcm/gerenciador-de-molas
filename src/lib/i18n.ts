@@ -170,6 +170,13 @@ const pt = {
 
   // ── AppShell ──
   search_placeholder: "Buscar tarefas…",
+  open_navigation: "Abrir navegação",
+  close_navigation: "Fechar navegação",
+  open_account: "Abrir menu da conta",
+  no_search_results: "Nenhuma tarefa encontrada",
+  no_search_results_hint: "Tente outro termo ou limpe a busca e os filtros para voltar ao quadro.",
+  clear_board_filters: "Limpar busca e filtros",
+  loading_board: "Carregando seu quadro…",
   urgent_tooltip_one: "card com prazo vencido ou hoje",
   urgent_tooltip_many: "cards com prazo vencido ou hoje",
   create_btn: "Criar",
@@ -434,6 +441,13 @@ const en = {
 
   // ── AppShell ──
   search_placeholder: "Search tasks…",
+  open_navigation: "Open navigation",
+  close_navigation: "Close navigation",
+  open_account: "Open account menu",
+  no_search_results: "No tasks found",
+  no_search_results_hint: "Try another term or clear search and filters to return to your board.",
+  clear_board_filters: "Clear search and filters",
+  loading_board: "Loading your board…",
   urgent_tooltip_one: "card with overdue or today deadline",
   urgent_tooltip_many: "cards with overdue or today deadlines",
   create_btn: "Create",

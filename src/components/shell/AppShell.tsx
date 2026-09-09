@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Plus,
@@ -65,6 +65,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const path = useRouterState({ select: (r) => r.location.pathname });
   const [mobileOpen, setMobileOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileOpen]);
   const [tracksOpen, setTracksOpen] = useState(true);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -103,8 +115,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen w-full bg-background text-foreground">
       {/* Sidebar */}
       <aside
+        id="main-navigation"
         className={`fixed inset-y-0 left-0 z-40 flex w-[220px] shrink-0 flex-col border-r bg-sidebar transition-transform md:static md:translate-x-0 ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
+          mobileOpen ? "visible translate-x-0" : "invisible -translate-x-full md:visible"
         }`}
       >
         {/* Brand */}
@@ -119,8 +132,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-foreground" />
           </div>
           <button
-            className="md:hidden text-muted-foreground hover:text-foreground"
-            onClick={() => setMobileOpen(false)}
+            className="flex h-11 w-11 items-center justify-center md:hidden text-muted-foreground hover:text-foreground"
+            aria-label={t("close_navigation")}
+            onClick={() => {
+              setMobileOpen(false);
+              menuButtonRef.current?.focus();
+            }}
           >
             <X className="h-4 w-4" />
           </button>
@@ -253,22 +270,27 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex flex-1 flex-col min-w-0">
         <header className="sticky top-0 z-20 flex h-[52px] items-center gap-2 border-b bg-background px-4 sm:px-5">
           <button
-            className="md:hidden text-muted-foreground hover:text-foreground"
+            className="flex h-11 w-11 shrink-0 items-center justify-center md:hidden text-muted-foreground hover:text-foreground"
+            ref={menuButtonRef}
+            aria-label={t("open_navigation")}
+            aria-expanded={mobileOpen}
+            aria-controls="main-navigation"
             onClick={() => setMobileOpen(true)}
           >
             <Menu className="h-5 w-5" />
           </button>
 
           {/* Search */}
-          <div className="relative flex-1 max-w-[360px]">
+          <div className="relative min-w-0 flex-1 max-w-[360px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
             <input
+              aria-label={t("search_placeholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t("search_placeholder")}
-              className="w-full rounded-sm border bg-muted py-1.5 pl-8 pr-12 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-foreground/40 transition-colors"
+              className="w-full rounded-sm border bg-muted py-2 pl-8 pr-2 text-base sm:pr-12 sm:text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-foreground/40 transition-colors"
             />
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-sm border px-1 py-0.5 text-[10px] font-mono text-muted-foreground kbd-badge">
+            <span className="hidden sm:block pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-sm border px-1 py-0.5 text-[10px] font-mono text-muted-foreground kbd-badge">
               ⌘K
             </span>
           </div>
@@ -300,7 +322,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             {/* Create */}
             <button
               onClick={() => setCreateOpen(true)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-sm bg-primary px-3 text-xs font-semibold text-primary-foreground hover:opacity-88 transition-opacity"
+              aria-label={t("create_btn")}
+              className="inline-flex h-11 sm:h-8 items-center gap-1.5 rounded-sm bg-primary px-3 text-xs font-semibold text-primary-foreground hover:opacity-88 transition-opacity"
               style={{
                 fontFamily: "var(--font-display)",
                 letterSpacing: "0.05em",
@@ -316,7 +339,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               <button
                 onClick={() => setThemeOpen((v) => !v)}
                 aria-label={t("toggle_theme")}
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground header-icon-hover hover:text-foreground transition-colors"
+                aria-expanded={themeOpen}
+                className="flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-sm text-muted-foreground header-icon-hover hover:text-foreground transition-colors"
               >
                 <Palette className="h-4 w-4" />
               </button>
@@ -351,7 +375,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="relative">
               <button
                 onClick={() => setAvatarOpen((v) => !v)}
-                className="avatar-btn flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold text-foreground hover:outline hover:outline-2 hover:outline-offset-1 transition-all"
+                aria-label={t("open_account")}
+                aria-expanded={avatarOpen}
+                className="avatar-btn flex h-11 w-11 sm:h-7 sm:w-7 items-center justify-center rounded-full text-[11px] font-bold text-foreground hover:outline hover:outline-2 hover:outline-offset-1 transition-all"
                 style={{ fontFamily: "var(--font-display)" }}
                 title={user.email}
               >

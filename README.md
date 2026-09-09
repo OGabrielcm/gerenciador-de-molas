@@ -1,10 +1,45 @@
-# True to Life Draw — Kanban Board
+# Molas / True to Life Draw — Kanban Board
 
 A modern kanban board built with React, TypeScript, and Supabase. Designed for task management with visual prioritization, checklists, dependencies, attachments, activity tracking, and time-based insights.
 
+[Published application — sign-in required](https://true-to-life-draw.vercel.app)
+
+## Portfolio overview
+
+Molas is a personal task-management application for organizing work into areas and Kanban columns. It combines task cards, goals, checklists, dependencies, activity history, time tracking and a separate habit tracker. The repository is named `true-to-life-draw`; the interface uses the name **Molas**.
+
+**Status:** evolving application. Existing code and tests are not a claim of production readiness or commercial adoption. A published deployment may differ from an unmerged development branch.
+
+### Demonstration walkthrough
+
+1. Sign in with a dedicated test account and complete onboarding.
+2. Create an area and its columns, then add a task with a title and priority.
+3. Find the task using search or a tag filter, open its details and update it.
+4. Move the task between columns and inspect its activity history.
+5. Use fictitious content and files in screenshots or recordings.
+
+### Implemented versus planned
+
+Implemented: authentication/onboarding, task and area management, search by title/description/tag, column movement, goals, checklists, dependencies, attachments, comments, activity/time tracking and themes. See the feature-specific documentation below for limitations.
+
+Not implemented: realtime subscriptions. Do not describe the board as realtime collaboration. The attachment bucket is documented as public, and deleting a card can leave orphaned storage objects; use non-sensitive sample files in demonstrations and review storage behavior separately before private use.
+
+### Contributions
+
+Repository history provides change-level attribution. A detailed statement of Gabriel's individual contribution is pending confirmation; this overview does not claim exclusive authorship.
+
+### Local interface checks without a real account
+
+```bash
+npx playwright install chromium
+npm run test:portfolio
+```
+
+These checks start an isolated local server and intercept a fictitious Supabase endpoint. They cover empty-search recovery, mobile navigation and task creation in an in-memory fixture. They do **not** validate real authentication, database persistence, storage policies or production. The existing `test:e2e` suite uses its own configured test environment and must not be pointed at private production accounts.
+
 ## Tech Stack
 
-- **Frontend**: React 19, TypeScript, TanStack Router, TanStack Start (Vite)
+- **Frontend**: React 19, TypeScript, TanStack Router and Vite (the current build configuration produces a client application)
 - **Styling**: Tailwind CSS v4 + Radix UI primitives (alert-dialog, slot) + `sonner` toasts
 - **State & Data**: React Context stores + TanStack React Query + Supabase client (no realtime subscriptions yet — see ROADMAP T2)
 - **Backend**: Supabase (PostgreSQL, authentication, RLS, Storage)
@@ -25,7 +60,7 @@ A modern kanban board built with React, TypeScript, and Supabase. Designed for t
 1. **Clone and install dependencies**
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/OGabrielcm/true-to-life-draw.git
 cd true-to-life-draw
 bun install  # or npm install / pnpm install
 ```
@@ -60,7 +95,7 @@ bun run preview  # Test production build locally
 | Script                | Purpose                                      |
 | --------------------- | -------------------------------------------- |
 | `bun run dev`         | Start Vite dev server with hot reload        |
-| `bun run build`       | Build for production (SSR + client)          |
+| `bun run build`       | Build the client application for production          |
 | `bun run build:dev`   | Build in development mode (debugging)        |
 | `bun run preview`     | Preview production build locally             |
 | `bun run lint`        | Run ESLint across src/                       |
