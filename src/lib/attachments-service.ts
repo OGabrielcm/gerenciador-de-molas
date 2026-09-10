@@ -5,9 +5,11 @@ type SetAttachments = React.Dispatch<React.SetStateAction<Record<string, Attachm
 
 const BUCKET = "attachments";
 
-// URL pública do objeto (bucket é público) para exibir/baixar nos cards.
-export function attachmentPublicUrl(path: string): string {
-  return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+// Private objects are readable only after Storage authorizes the current user.
+export async function attachmentSignedUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 300);
+  if (error || !data?.signedUrl) throw new Error("Não foi possível abrir o anexo.");
+  return data.signedUrl;
 }
 
 export async function fetchAttachments(cardId: string): Promise<Attachment[]> {
@@ -34,7 +36,7 @@ export async function addAttachment(
   const { error: upErr } = await supabase.storage
     .from(BUCKET)
     .upload(path, file, { contentType: file.type || undefined, upsert: false });
-  if (upErr) return;
+  if (upErr) throw new Error("Não foi possível enviar o anexo. Tente novamente.");
 
   const { data, error } = await supabase
     .from("attachments")
@@ -52,7 +54,7 @@ export async function addAttachment(
   if (error || !data) {
     // rollback do objeto para não orfanar arquivo sem metadados
     await supabase.storage.from(BUCKET).remove([path]);
-    return;
+    throw new Error("Não foi possível registrar o anexo. Tente novamente.");
   }
 
   setAttachments((cur) => ({
@@ -71,9 +73,15 @@ export async function deleteAttachment(
   const { error: rmErr } = await supabase.storage.from(BUCKET).remove([attachment.path]);
   // Se o storage falhou de verdade, não apaga a row (evita registro órfão
   // apontando para arquivo que continua no bucket).
-  if (rmErr) return;
+  if (rmErr) throw new Error("Não foi possível remover o arquivo. Tente novamente.");
 
-  await supabase.from("attachments").delete().eq("id", attachment.id);
+  const { data, error } = await supabase
+    .from("attachments")
+    .delete()
+    .eq("id", attachment.id)
+    .select("id");
+  if (error || !data?.length)
+    throw new Error("O registro do anexo não foi removido. Atualize e tente novamente.");
 
   setAttachments((cur) => ({
     ...cur,

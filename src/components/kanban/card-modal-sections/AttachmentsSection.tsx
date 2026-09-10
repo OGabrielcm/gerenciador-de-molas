@@ -1,10 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Paperclip, Trash2, Download, Loader2, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useKanban } from "@/lib/kanban-store";
 import { useLocale } from "@/lib/locale-context";
 import { formatBytes } from "@/lib/kanban-types";
-import { attachmentPublicUrl } from "@/lib/attachments-service";
+import { attachmentSignedUrl } from "@/lib/attachments-service";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB
 
@@ -18,6 +18,29 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
   const attachments = attachmentsByCard[cardId] ?? [];
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const paths = JSON.stringify(attachments.map((a) => a.path));
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      const entries = await Promise.all(
+        (JSON.parse(paths) as string[]).map(async (path) => {
+          try {
+            return [path, await attachmentSignedUrl(path)] as const;
+          } catch {
+            return [path, ""] as const;
+          }
+        }),
+      );
+      if (active) setUrls(Object.fromEntries(entries));
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 240_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [paths]);
 
   const onPick = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -27,7 +50,11 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
         toast.error(`"${file.name}" ${t("attach_too_large")}`);
         continue;
       }
-      await addAttachment(cardId, file);
+      try {
+        await addAttachment(cardId, file);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Falha ao enviar anexo.");
+      }
     }
     setUploading(false);
     if (inputRef.current) inputRef.current.value = "";
@@ -48,13 +75,13 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
         )}
 
         {attachments.map((a) => {
-          const url = attachmentPublicUrl(a.path);
+          const url = urls[a.path] || undefined;
           return (
             <div
               key={a.id}
               className="group flex items-center gap-2 rounded-md border bg-background px-2.5 py-1.5"
             >
-              {isImage(a.mime) ? (
+              {isImage(a.mime) && url ? (
                 <a href={url} target="_blank" rel="noreferrer" className="shrink-0">
                   <img
                     src={url}
@@ -75,10 +102,17 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
                   target="_blank"
                   rel="noreferrer"
                   className="block truncate text-sm text-foreground hover:underline"
-                  title={a.name}
+                  title={url ? a.name : "Link indisponível. Atualize o card para tentar novamente."}
                 >
                   {a.name}
                 </a>
+                {urls[a.path] === "" && (
+                  <p role="alert" className="text-xs text-destructive">
+                    {locale === "pt"
+                      ? "Não foi possível abrir o anexo. Feche e abra o card para tentar novamente."
+                      : "Could not open the attachment. Close and reopen the card to retry."}
+                  </p>
+                )}
                 <p className="text-[10px] text-muted-foreground">
                   {formatBytes(a.size_bytes)}
                   {a.size_bytes ? " · " : ""}
@@ -99,7 +133,13 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
                 </a>
                 {/* Excluir sempre visível no mobile (sem hover); fade só no desktop (lição 3.2). */}
                 <button
-                  onClick={() => deleteAttachment(a)}
+                  onClick={() =>
+                    void deleteAttachment(a).catch((error: unknown) =>
+                      toast.error(
+                        error instanceof Error ? error.message : "Falha ao remover anexo.",
+                      ),
+                    )
+                  }
                   aria-label={t("attach_delete")}
                   className="flex h-9 w-9 items-center justify-center rounded text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100"
                 >

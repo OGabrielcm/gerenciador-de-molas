@@ -398,7 +398,7 @@ The card detail modal uses a **two-column layout** (inspired by Jira):
 
 ### Attachments
 
-Files are uploaded to the `attachments` Storage bucket (public, 20 MB);
+Files are uploaded to the `attachments` Storage bucket (private, 20 MB);
 metadata lives in the `attachments` table. Deleting an attachment removes the
 Storage object **and** the row.
 
@@ -521,3 +521,11 @@ Ensure `.env.test` exists and contains valid test account credentials. Tests mus
 ## License
 
 Private project — contact gabrielcartaxomerces@gmail.com for access inquiries.
+
+## Local security review — September 2026
+
+This branch includes forward migration `supabase/migrations/202609100001_private_card_resources.sql`. Apply it after the legacy attachment/activity migrations and deploy the signed-link frontend together with it. It makes the attachment bucket private and restricts card resources to the owner of both the resource and its parent task. Existing file paths stay unchanged; previously issued public URLs stop serving private files.
+
+`node tests/integration/run-postgres.mjs --security` checks the policies in a disposable PostgreSQL container with simulated auth identity and Storage tables. This does not replace a real Auth/Storage integration check. That integration was blocked in the local audit environment; it remains required before production deployment.
+
+Attachment upload/removal failures are surfaced instead of silently updating the interface. Downloads use five-minute signed URLs, refreshed while the attachment panel is open. Check `npm test`, `npm run test:portfolio`, `npm run build` and the specific database suite before release. Local audit changes are not proof that production has been updated.
