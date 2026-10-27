@@ -28,7 +28,12 @@ import {
   rowToTrilha,
   trackToRow,
 } from "./kanban-mappers";
-import { computeColumnDeletion, computeReorderOrder, computeTrackDeletion } from "./kanban-logic";
+import {
+  computeColumnDeletion,
+  computeReorderOrder,
+  computeTrackDeletion,
+  computeTrackReorder,
+} from "./kanban-logic";
 import { kanbanRepo } from "./kanban-repo";
 import { useCardDetails } from "./use-card-details";
 import { useTemplates } from "./use-templates";
@@ -435,6 +440,24 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
           cur.map((t) => (t.id === id ? { ...t, ...data } : t)).sort((a, b) => a.order - b.order),
         );
         await kanbanRepo.tracks.update(id, data);
+      },
+
+      reorderTrack: async (id: string, targetId: string, position: "before" | "after") => {
+        const snapshot = stateRef.current.tracks;
+        const next = computeTrackReorder(snapshot, id, targetId, position);
+        if (!next) return;
+        setTracks(next);
+        // Só persiste as tracks cujo `order` mudou.
+        const prevOrder = new Map(snapshot.map((t) => [t.id, t.order]));
+        const changed = next.filter((t) => prevOrder.get(t.id) !== t.order);
+        const results = await Promise.all(
+          changed.map((t) => kanbanRepo.tracks.updateOrder(t.id, t.order)),
+        );
+        const failed = results.find((r) => r.error);
+        if (failed) {
+          setTracks(snapshot);
+          console.error("[reorderTrack] Falha ao salvar no Supabase:", failed.error);
+        }
       },
 
       deleteTrack: async (id: string) => {

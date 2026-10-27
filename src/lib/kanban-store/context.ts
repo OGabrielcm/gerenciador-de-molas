@@ -55,6 +55,7 @@ export interface KanbanCtx {
   createTrack: (t: Omit<Track, "id" | "order"> & { order?: number }) => void;
   updateTrack: (id: string, data: Omit<Track, "id">) => void;
   deleteTrack: (id: string) => void;
+  reorderTrack: (id: TrackId, targetId: TrackId, position: "before" | "after") => void;
   createColumn: (name: string, trackId?: string) => void;
   updateColumn: (id: string, data: { name?: string; wip_limit?: number | null }) => void;
   deleteColumn: (id: string) => void;

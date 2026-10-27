@@ -4,6 +4,7 @@ import {
   computeTrackDeletion,
   computeColumnDeletion,
   getVisibleTracks,
+  computeTrackReorder,
 } from "./kanban-logic";
 import type { Card, Column, Track } from "../kanban-types";
 
@@ -238,5 +239,42 @@ describe("getVisibleTracks", () => {
         (track) => track.id,
       ),
     ).toEqual(["ai-dev"]);
+  });
+});
+
+describe("computeTrackReorder", () => {
+  const tracks = [
+    makeTrack({ id: "a", order: 0 }),
+    makeTrack({ id: "b", order: 1 }),
+    makeTrack({ id: "c", order: 2 }),
+  ];
+  const ids = (r: Track[] | null) => r?.map((t) => `${t.id}:${t.order}`);
+
+  it("moves a track before the target and renumbers order", () => {
+    expect(ids(computeTrackReorder(tracks, "c", "a", "before"))).toEqual(["c:0", "a:1", "b:2"]);
+  });
+
+  it("moves a track after the target", () => {
+    expect(ids(computeTrackReorder(tracks, "a", "c", "after"))).toEqual(["b:0", "c:1", "a:2"]);
+  });
+
+  it("returns null when the position does not change", () => {
+    expect(computeTrackReorder(tracks, "a", "b", "before")).toBeNull();
+    expect(computeTrackReorder(tracks, "b", "a", "after")).toBeNull();
+    expect(computeTrackReorder(tracks, "a", "a", "after")).toBeNull();
+  });
+
+  it("returns null for unknown ids", () => {
+    expect(computeTrackReorder(tracks, "x", "a", "before")).toBeNull();
+    expect(computeTrackReorder(tracks, "a", "x", "before")).toBeNull();
+  });
+
+  it("normalizes unsorted input and gaps in order", () => {
+    const messy = [
+      makeTrack({ id: "c", order: 9 }),
+      makeTrack({ id: "a", order: 1 }),
+      makeTrack({ id: "b", order: 5 }),
+    ];
+    expect(ids(computeTrackReorder(messy, "a", "b", "after"))).toEqual(["b:0", "a:1", "c:2"]);
   });
 });

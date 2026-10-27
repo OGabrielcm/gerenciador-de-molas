@@ -1,5 +1,14 @@
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Plus, Tags, ChevronDown, Layers, Archive, Columns, SlidersHorizontal } from "lucide-react";
+import {
+  Plus,
+  Tags,
+  ChevronDown,
+  Layers,
+  Archive,
+  Columns,
+  SlidersHorizontal,
+  GripVertical,
+} from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import { Link } from "@tanstack/react-router";
 import {
@@ -48,6 +57,7 @@ export function Board() {
     createTrack,
     updateTrack,
     deleteTrack,
+    reorderTrack,
     createColumn,
     updateColumn,
     deleteColumn,
@@ -67,6 +77,11 @@ export function Board() {
   const filterRef = useRef<HTMLDivElement>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<{ track: TrackId; col: ColumnId } | null>(null);
+  // Arraste de seções (tracks). Separado do arraste de cards: durante ele os
+  // corpos das seções ficam recolhidos, então as drop zones de card não
+  // interceptam o evento e a lista vira só cabeçalhos — fácil de reordenar.
+  const [draggingTrackId, setDraggingTrackId] = useState<TrackId | null>(null);
+  const [trackDropTarget, setTrackDropTarget] = useState<TrackDropTarget | null>(null);
 
   // Busca (2.3): casa o termo contra TÍTULO, DESCRIÇÃO e NOME das etiquetas do
   // card. Atenção: c.tags guarda IDs de trilha, não nomes — por isso resolvemos
@@ -147,6 +162,13 @@ export function Board() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [filterOpen]);
+
+  const visibleTracks = getVisibleTracks(tracks, filtered, selectedAreaIds, search);
+
+  const endTrackDrag = () => {
+    setDraggingTrackId(null);
+    setTrackDropTarget(null);
+  };
 
   return (
     // kb-dragging: durante o arraste, desliga a box-shadow dos cards (existe só
@@ -258,7 +280,23 @@ export function Board() {
       </div>
 
       <main className="flex-1 overflow-x-auto">
-        <div className="flex flex-col gap-4 p-4 sm:p-6">
+        <div
+          className="flex flex-col gap-4 p-4 sm:p-6"
+          // Drop no vão entre seções também conta: usa o último alvo marcado.
+          onDragOver={(e) => {
+            if (!draggingTrackId) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(e) => {
+            if (!draggingTrackId) return;
+            e.preventDefault();
+            if (trackDropTarget) {
+              reorderTrack(draggingTrackId, trackDropTarget.id, trackDropTarget.pos);
+            }
+            endTrackDrag();
+          }}
+        >
           {archivedCount > 0 && (
             <Link
               to="/dashboards"
@@ -272,7 +310,7 @@ export function Board() {
               <span className="text-foreground/70">{t("see_dashboards")}</span>
             </Link>
           )}
-          {getVisibleTracks(tracks, filtered, selectedAreaIds, search).map((track) => (
+          {visibleTracks.map((track, i) => (
             <Swimlane
               key={track.id}
               track={track}
@@ -294,6 +332,25 @@ export function Board() {
               cardColors={cardColors}
               onToggleStar={toggleStar}
               onDelete={deleteCard}
+              trackDrag={{
+                active: draggingTrackId !== null,
+                isSource: draggingTrackId === track.id,
+                dropPos: trackDropTarget?.id === track.id ? trackDropTarget.pos : null,
+                onStart: () => setDraggingTrackId(track.id),
+                onEnd: endTrackDrag,
+                onOver: (pos) =>
+                  setTrackDropTarget((cur) =>
+                    cur?.id === track.id && cur.pos === pos ? cur : { id: track.id, pos },
+                  ),
+                onMoveUp:
+                  i > 0
+                    ? () => reorderTrack(track.id, visibleTracks[i - 1].id, "before")
+                    : undefined,
+                onMoveDown:
+                  i < visibleTracks.length - 1
+                    ? () => reorderTrack(track.id, visibleTracks[i + 1].id, "after")
+                    : undefined,
+              }}
             />
           ))}
           {tracks.length <= 1 && (
@@ -421,6 +478,19 @@ export function Board() {
   );
 }
 
+type TrackDropTarget = { id: TrackId; pos: "before" | "after" };
+
+interface TrackDragProps {
+  active: boolean;
+  isSource: boolean;
+  dropPos: "before" | "after" | null;
+  onStart: () => void;
+  onEnd: () => void;
+  onOver: (pos: "before" | "after") => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+}
+
 // Envolve um CardItem com drop zone que detecta posição (metade superior/inferior)
 // e dispara reorderCard com beforeId/afterId correspondente. Mostra uma linha
 // visual ANTES ou DEPOIS do card durante o drag.
@@ -543,6 +613,7 @@ function Swimlane({
   cardColors,
   onToggleStar,
   onDelete,
+  trackDrag,
 }: {
   track: Track;
   columns: Column[];
@@ -566,8 +637,10 @@ function Swimlane({
   cardColors: Record<string, string>;
   onToggleStar?: (id: string) => void;
   onDelete?: (id: string) => void;
+  trackDrag: TrackDragProps;
 }) {
   const { theme } = useTheme();
+  const sectionRef = useRef<HTMLElement>(null);
   const { t } = useLocale();
   const inProgress = cards.filter((c) => c.col === "inprogress").length;
   const bg = track.darkBg;
@@ -575,17 +648,65 @@ function Swimlane({
 
   return (
     <section
+      ref={sectionRef}
       id={`track-${track.id}`}
       data-track={track.id}
-      className="overflow-hidden rounded-xl border"
-      style={{ borderLeft: `3px solid ${track.border}` }}
+      className="overflow-hidden rounded-xl border transition-opacity"
+      style={{
+        borderLeft: `3px solid ${track.border}`,
+        opacity: trackDrag.isSource ? 0.4 : 1,
+        // Indicador de drop: linha acima/abaixo da seção (box-shadow não é
+        // cortado pelo overflow-hidden da própria seção).
+        boxShadow:
+          trackDrag.dropPos === "before"
+            ? "0 -3px 0 0 var(--foreground)"
+            : trackDrag.dropPos === "after"
+              ? "0 3px 0 0 var(--foreground)"
+              : undefined,
+      }}
+      onDragOver={(e) => {
+        if (!trackDrag.active) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        trackDrag.onOver(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+      }}
     >
-      <button
-        onClick={onToggleCollapsed}
-        className="flex w-full items-center justify-between gap-3 rounded-t-xl px-4 py-3 text-left transition-opacity hover:opacity-90"
+      <div
+        className="flex w-full items-center gap-1 rounded-t-xl py-1.5 pl-1.5 pr-2"
         style={{ backgroundColor: bg, color: fg }}
       >
-        <div className="flex items-center gap-3">
+        <div
+          role="button"
+          tabIndex={0}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("application/x-molas-track", track.id);
+            if (sectionRef.current) e.dataTransfer.setDragImage(sectionRef.current, 24, 24);
+            // Adia o recolhimento das seções: mexer no layout dentro do próprio
+            // dragstart faz o Chrome abortar o arraste.
+            setTimeout(trackDrag.onStart, 0);
+          }}
+          onDragEnd={trackDrag.onEnd}
+          onKeyDown={(e) => {
+            if (!e.altKey) return;
+            if (e.key === "ArrowUp" && trackDrag.onMoveUp) {
+              e.preventDefault();
+              trackDrag.onMoveUp();
+            } else if (e.key === "ArrowDown" && trackDrag.onMoveDown) {
+              e.preventDefault();
+              trackDrag.onMoveDown();
+            }
+          }}
+          className="cursor-grab rounded-md p-1.5 opacity-40 transition-opacity hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing"
+          aria-label={t("reorder_section")}
+          title={t("reorder_section")}
+        >
+          <GripVertical className="h-4 w-4" />
+        </div>
+        <button
+          onClick={onToggleCollapsed}
+          className="flex flex-1 items-center gap-3 py-1.5 pl-1 text-left transition-opacity hover:opacity-90"
+        >
           <h2
             className="text-lg font-semibold uppercase"
             style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
@@ -596,28 +717,30 @@ function Swimlane({
             {cards.length} {cards.length === 1 ? t("card_label") : t("cards_label")}
             {inProgress > 0 && ` · ${inProgress} ${t("in_progress_label")}`}
           </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenColumns();
-            }}
-            className="rounded-md p-1.5 opacity-60 hover:opacity-100 transition-opacity"
-            style={{ color: fg }}
-            aria-label={t("columns")}
-            title={t("columns")}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-          </button>
+        </button>
+        <button
+          onClick={onOpenColumns}
+          className="rounded-md p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+          style={{ color: fg }}
+          aria-label={t("columns")}
+          title={t("columns")}
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onToggleCollapsed}
+          className="rounded-md p-1.5"
+          aria-label={track.name}
+          aria-expanded={!collapsed}
+        >
           <ChevronDown
             className="h-4 w-4 transition-transform"
             style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0)" }}
           />
-        </div>
-      </button>
+        </button>
+      </div>
 
-      {!collapsed && (
+      {!collapsed && !trackDrag.active && (
         <div className="flex gap-3 overflow-x-auto p-3 pb-4">
           {columns.map((col) => {
             const colCards = cards

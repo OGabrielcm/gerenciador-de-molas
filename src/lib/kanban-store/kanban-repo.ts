@@ -79,6 +79,8 @@ export const kanbanRepo = {
         .single(),
     update: (id: string, data: Parameters<typeof trackToRow>[0]) =>
       supabase.from("tracks").update(trackToRow(data)).eq("id", id),
+    updateOrder: (id: string, order: number) =>
+      supabase.from("tracks").update({ order }).eq("id", id),
     remove: (id: string) => supabase.from("tracks").delete().eq("id", id),
   },
 

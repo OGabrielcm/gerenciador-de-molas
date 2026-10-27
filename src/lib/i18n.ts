@@ -73,6 +73,7 @@ const pt = {
   cards_label: "cards",
   card_label: "card",
   drag_card: "Arrastar card",
+  reorder_section: "Arrastar para reordenar (Alt+↑/↓)",
 
   // ── CardItem ──
   blocked_by_deps: "Bloqueado por dependências pendentes",
@@ -338,6 +339,7 @@ const en = {
   cards_label: "cards",
   card_label: "card",
   drag_card: "Drag card",
+  reorder_section: "Drag to reorder (Alt+↑/↓)",
 
   // ── CardItem ──
   blocked_by_deps: "Blocked by pending dependencies",

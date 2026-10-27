@@ -10,6 +10,8 @@
 > Baseado em análise comparativa com JIRA, Trello e ferramentas Kanban profissionais.
 > Atualizado em: 2026-06-22 — Fases 1–5 completas ✅ · Blocos 1–7 + UX fixes concluídos · MVP em produção (Vercel)
 >
+> **2026-10-27 — Reordenar áreas arrastando:** alça no cabeçalho de cada área (swimlane) permite arrastar para reordenar; durante o arraste as áreas recolhem para só cabeçalhos. Teclado: Alt+↑/↓ na alça. Persiste `tracks.order` renumerado 0..n-1 (coluna integer, sem migração), com rollback otimista. Lógica pura em `computeTrackReorder` com testes. **Validado só por tsc/vitest/eslint — não testado no navegador.**
+>
 > **2026-06-22 — Filtro multi-select de áreas:** UI normalizada para “Áreas” no filtro lateral e `selectedAreaIds` no frontend/store. **Banco não foi renomeado nem migrado:** Supabase continua com schema legado `tracks`, `track_id` e `trilhas`; a mudança foi só de UX/camada de app. Regra do filtro: `[] = Todos`, múltiplas áreas selecionáveis, e busca continua ocultando áreas sem cards encontrados.
 >
 > **2026-06-16 — Refactor do kanban-store + limpeza + testes unitários:**

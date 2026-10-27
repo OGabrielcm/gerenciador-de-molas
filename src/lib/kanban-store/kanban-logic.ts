@@ -131,6 +131,26 @@ export function computeColumnDeletion(
   };
 }
 
+// Move a track `id` para antes/depois de `targetId` e renumera `order` como
+// 0..n-1 (tracks.order é integer no banco, não dá para usar ponto médio como
+// nos cards). Retorna `null` quando não há mudança real ou ids inválidos.
+export function computeTrackReorder(
+  tracks: Track[],
+  id: TrackId,
+  targetId: TrackId,
+  position: "before" | "after",
+): Track[] | null {
+  if (id === targetId) return null;
+  const sorted = [...tracks].sort((a, b) => a.order - b.order);
+  const moving = sorted.find((t) => t.id === id);
+  if (!moving || !sorted.some((t) => t.id === targetId)) return null;
+  const rest = sorted.filter((t) => t.id !== id);
+  const targetIdx = rest.findIndex((t) => t.id === targetId);
+  rest.splice(position === "before" ? targetIdx : targetIdx + 1, 0, moving);
+  if (rest.every((t, i) => t.id === sorted[i].id)) return null;
+  return rest.map((t, i) => ({ ...t, order: i }));
+}
+
 export function getVisibleTracks(
   tracks: Track[],
   filteredCards: Card[],
