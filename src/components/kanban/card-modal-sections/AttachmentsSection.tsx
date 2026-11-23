@@ -1,10 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Paperclip, Trash2, Download, Loader2, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useKanban } from "@/lib/kanban-store";
 import { useLocale } from "@/lib/locale-context";
 import { formatBytes } from "@/lib/kanban-types";
-import { attachmentPublicUrl } from "@/lib/attachments-service";
+import { fetchAttachmentUrls } from "@/lib/attachments-service";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB
 
@@ -18,6 +18,20 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
   const attachments = attachmentsByCard[cardId] ?? [];
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+
+  // Signed URLs dos anexos (bucket privado). Refaz quando a lista muda.
+  const pathsKey = attachments.map((a) => a.path).join("\n");
+  useEffect(() => {
+    if (!pathsKey) return;
+    let cancelled = false;
+    fetchAttachmentUrls(pathsKey.split("\n")).then((next) => {
+      if (!cancelled) setUrls(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathsKey]);
 
   const onPick = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -48,13 +62,13 @@ export function AttachmentsSection({ cardId }: { cardId: string }) {
         )}
 
         {attachments.map((a) => {
-          const url = attachmentPublicUrl(a.path);
+          const url = urls[a.path];
           return (
             <div
               key={a.id}
               className="group flex items-center gap-2 rounded-md border bg-background px-2.5 py-1.5"
             >
-              {isImage(a.mime) ? (
+              {isImage(a.mime) && url ? (
                 <a href={url} target="_blank" rel="noreferrer" className="shrink-0">
                   <img
                     src={url}

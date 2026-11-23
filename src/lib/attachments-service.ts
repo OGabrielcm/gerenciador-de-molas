@@ -5,9 +5,22 @@ type SetAttachments = React.Dispatch<React.SetStateAction<Record<string, Attachm
 
 const BUCKET = "attachments";
 
-// URL pública do objeto (bucket é público) para exibir/baixar nos cards.
-export function attachmentPublicUrl(path: string): string {
-  return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
+
+// O bucket é privado: os arquivos são exibidos/baixados por signed URL, que só
+// o dono da task consegue gerar (RLS em storage.objects). Devolve path → URL;
+// um path sem URL (erro ou sem permissão) simplesmente fica fora do mapa.
+export async function fetchAttachmentUrls(paths: string[]): Promise<Record<string, string>> {
+  if (paths.length === 0) return {};
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrls(paths, SIGNED_URL_TTL_SECONDS);
+  if (error || !data) return {};
+  const urls: Record<string, string> = {};
+  for (const item of data) {
+    if (item.path && item.signedUrl && !item.error) urls[item.path] = item.signedUrl;
+  }
+  return urls;
 }
 
 export async function fetchAttachments(cardId: string): Promise<Attachment[]> {
