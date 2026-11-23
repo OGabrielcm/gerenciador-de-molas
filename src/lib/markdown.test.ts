@@ -40,6 +40,22 @@ describe("renderMarkdown", () => {
     expect(result).toContain("Click here");
   });
 
+  it("escapes quotes so a link URL cannot break out of href", () => {
+    const result = renderMarkdown('[x](https://a" onmouseover="alert(1))');
+    expect(result).not.toContain('" onmouseover="');
+    expect(result).toContain("&quot;");
+  });
+
+  it("does not turn javascript: or data: URLs into links", () => {
+    expect(renderMarkdown("[x](javascript:alert(1))")).not.toContain("<a ");
+    expect(renderMarkdown("[x](JaVaScRiPt:alert(1))")).not.toContain("<a ");
+    expect(renderMarkdown("[x](data:text/html,hi)")).not.toContain("<a ");
+  });
+
+  it("keeps mailto: links", () => {
+    expect(renderMarkdown("[mail](mailto:a@b.co)")).toContain('<a href="mailto:a@b.co"');
+  });
+
   it("renders list items with - prefix inside <ul>", () => {
     const result = renderMarkdown("- item one\n- item two");
     expect(result).toContain("<ul");

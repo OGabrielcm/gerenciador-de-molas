@@ -185,7 +185,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const headerKey = header.startsWith("Bearer ") ? header.slice(7) : "";
   const queryKey = (req.query?.key as string) ?? "";
   const key = headerKey || queryKey;
-  const authorized = !TTL_API_KEY || key === TTL_API_KEY;
+  // Sem TTL_API_KEY configurada o servidor NEGA tudo (igual a api/tasks.ts):
+  // uma env ausente num deploy não pode abrir o board com a service role.
+  const authorized = !!TTL_API_KEY && key === TTL_API_KEY;
 
   const server = createMcpServer(authorized);
   const transport = new StreamableHTTPServerTransport({
