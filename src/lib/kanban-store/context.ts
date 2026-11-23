@@ -38,6 +38,9 @@ export interface KanbanCtx {
   selectedAreaIds: string[];
   setSelectedAreaIds: Dispatch<SetStateAction<string[]>>;
   loading: boolean;
+  // Mensagem do erro da carga inicial (null = sem erro). `reload` refaz a carga.
+  loadError: string | null;
+  reload: () => void;
   addCard: (data: AddInput) => void;
   updateCard: (id: string, patch: Partial<Card>) => void;
   moveCard: (id: string, col: ColumnId, track?: TrackId) => void;

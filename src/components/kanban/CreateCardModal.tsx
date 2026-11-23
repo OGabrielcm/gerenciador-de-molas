@@ -2,10 +2,10 @@ import { AddCardModal } from "./AddCardModal";
 import { useKanban } from "@/lib/kanban-store";
 
 export function CreateCardModal({ onClose }: { onClose: () => void }) {
-  const { trilhas, tracks, columns, cards, templates, addCard } = useKanban();
+  const { trilhas, tracks, cards, templates, addCard, getColumnsForTrack } = useKanban();
   const goals = cards.filter((c) => c.type === "Goal");
   const firstTrack = tracks[0]?.id ?? "";
-  const firstColumn = columns[0]?.id ?? "todo";
+  const firstColumn = firstTrack ? (getColumnsForTrack(firstTrack)[0]?.id ?? "todo") : "todo";
   if (!firstTrack) {
     onClose();
     return null;
@@ -15,7 +15,6 @@ export function CreateCardModal({ onClose }: { onClose: () => void }) {
       column={firstColumn}
       track={firstTrack}
       tracks={tracks}
-      columns={columns}
       trilhas={trilhas}
       goals={goals}
       templates={templates}

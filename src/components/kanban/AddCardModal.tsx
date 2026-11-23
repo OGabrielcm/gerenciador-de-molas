@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Star, LayoutTemplate } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
+import { useKanban } from "@/lib/kanban-store";
 import {
-  Column,
   ColumnId,
   Priority,
   PRIORITIES,
@@ -31,7 +31,6 @@ export function AddCardModal({
   column,
   track,
   tracks,
-  columns,
   trilhas,
   goals,
   templates = [],
@@ -43,7 +42,6 @@ export function AddCardModal({
   column: ColumnId;
   track: TrackId;
   tracks: Track[];
-  columns: Column[];
   trilhas: Trilha[];
   goals: Card[];
   templates?: CardTemplate[];
@@ -64,6 +62,9 @@ export function AddCardModal({
   const [starred, setStarred] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const { t } = useLocale();
+  const { getColumnsForTrack } = useKanban();
+  // Colunas só da área escolhida — cada área (track) pode ter colunas próprias.
+  const columns = getColumnsForTrack(trackSel);
 
   const applyTemplate = (tpl: CardTemplate) => {
     setType(tpl.type);
@@ -220,8 +221,14 @@ export function AddCardModal({
                   <select
                     value={trackSel}
                     onChange={(e) => {
-                      setTrackSel(e.target.value as TrackId);
+                      const next = e.target.value as TrackId;
+                      setTrackSel(next);
                       setParentId("");
+                      // A coluna escolhida pode não existir na nova área.
+                      const nextCols = getColumnsForTrack(next);
+                      if (!nextCols.some((c) => c.id === colSel)) {
+                        setColSel(nextCols[0]?.id ?? colSel);
+                      }
                     }}
                     className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-foreground/40"
                     style={{ borderWidth: "0.5px" }}

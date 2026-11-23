@@ -3,7 +3,15 @@
 // computações não-triviais (cálculo de ordem no reorder, cascata cruzada
 // ao deletar track/column) sejam testáveis isoladamente. O provider passa
 // a apenas orquestrar: chama estas funções, aplica o estado e persiste.
-import { Card, Column, ColumnId, Track, TrackId } from "../kanban-types";
+import {
+  Card,
+  Column,
+  ColumnId,
+  Track,
+  TrackId,
+  columnsForTrack,
+  isDoneCard,
+} from "../kanban-types";
 
 // Tolerância para comparar `order` (float) — ver Card.order em kanban-types.
 const ORDER_EPSILON = 1e-9;
@@ -61,10 +69,12 @@ export function computeReorderOrder(
 
 // Resultado de uma deleção em cascata (track ou column). Carrega tanto o novo
 // estado local (cards/lista de entidades) quanto o ESCOPO da persistência:
-//   - fallbackId != null  → cards órfãos foram REATRIBUÍDOS a fallbackId;
-//   - fallbackId == null  → não havia fallback, cards órfãos foram REMOVIDOS.
-// movedCardIds / deletedCardIds existem para o provider saber o que persistir
-// e para os testes asseverarem o efeito sem tocar no banco.
+//   - movedCardIds   → cards órfãos REATRIBUÍDOS (o novo track/col/order de cada
+//                      um está em `cards`; o provider persiste card a card);
+//   - deletedCardIds → cards órfãos sem destino válido, REMOVIDOS.
+// fallbackId: na track, a track de destino (null = não sobrou track); na
+// column, a primeira coluna restante da mesma área da coluna deletada (null =
+// a área ficou sem colunas). O destino real de cada card está em `cards`.
 export interface CascadeDeletionResult<T> {
   cards: Card[];
   remaining: T[];
@@ -73,11 +83,47 @@ export interface CascadeDeletionResult<T> {
   deletedCardIds: string[];
 }
 
-// Deleta uma track movendo seus cards para a primeira track restante; se não
-// houver track restante, apaga os cards daquela track. Espelha deleteTrack.
+// Aplica as realocações de órfãos: cada card vai para (track, col) de destino e
+// recebe `order` no FIM da coluna de destino, preservando a ordem relativa
+// entre os órfãos (sem duplicar o order de quem já está lá).
+function relocateOrphans(
+  cards: Card[],
+  moves: Map<string, { track: TrackId; col: ColumnId }>,
+  now: string,
+): Card[] {
+  const stayers = cards.filter((c) => !moves.has(c.id));
+  const nextByDest = new Map<string, number>();
+  const patched = new Map<string, Card>();
+  const orphans = cards.filter((c) => moves.has(c.id)).sort((a, b) => a.order - b.order);
+  for (const card of orphans) {
+    const dest = moves.get(card.id);
+    if (!dest) continue;
+    const key = `${dest.track}::${dest.col}`;
+    let next = nextByDest.get(key);
+    if (next === undefined) {
+      const inDest = stayers.filter((c) => c.track === dest.track && c.col === dest.col);
+      next = inDest.length ? Math.max(...inDest.map((c) => c.order)) + 1 : 1;
+    }
+    patched.set(card.id, {
+      ...card,
+      track: dest.track,
+      col: dest.col,
+      order: next,
+      updated_at: now,
+    });
+    nextByDest.set(key, next + 1);
+  }
+  return cards.map((c) => patched.get(c.id) ?? c);
+}
+
+// Deleta uma track movendo seus cards para a primeira track restante: cada card
+// mantém a coluna se ela existir na área de destino, senão vai para a primeira
+// coluna dela; o order vai para o fim da coluna de destino. Se não houver track
+// restante, apaga os cards daquela track. Espelha deleteTrack.
 export function computeTrackDeletion(
   cards: Card[],
   tracks: Track[],
+  columns: Column[],
   id: TrackId,
   now: string,
 ): CascadeDeletionResult<Track> {
@@ -85,8 +131,14 @@ export function computeTrackDeletion(
   const fallback = remaining[0];
   const orphans = cards.filter((c) => c.track === id);
   if (fallback) {
+    const destCols = columnsForTrack(columns, fallback.id);
+    const moves = new Map<string, { track: TrackId; col: ColumnId }>();
+    for (const c of orphans) {
+      const col = destCols.some((dc) => dc.id === c.col) ? c.col : (destCols[0]?.id ?? c.col);
+      moves.set(c.id, { track: fallback.id, col });
+    }
     return {
-      cards: cards.map((c) => (c.track === id ? { ...c, track: fallback.id, updated_at: now } : c)),
+      cards: relocateOrphans(cards, moves, now),
       remaining,
       fallbackId: fallback.id,
       movedCardIds: orphans.map((c) => c.id),
@@ -102,32 +154,40 @@ export function computeTrackDeletion(
   };
 }
 
-// Deleta uma column movendo seus cards para a primeira column restante; se não
-// houver column restante, apaga os cards daquela column. Espelha deleteColumn.
+// Deleta uma column movendo cada card dela para a primeira coluna que a ÁREA
+// DO CARD mostra depois da deleção (uma coluna global pode ter cards de várias
+// áreas); o order vai para o fim da coluna de destino. Card cuja área ficou
+// sem nenhuma coluna é apagado. Espelha deleteColumn.
 export function computeColumnDeletion(
   cards: Card[],
   columns: Column[],
   id: ColumnId,
   now: string,
 ): CascadeDeletionResult<Column> {
+  const deleted = columns.find((c) => c.id === id);
   const remaining = columns.filter((c) => c.id !== id);
-  const fallback = remaining[0];
   const orphans = cards.filter((c) => c.col === id);
-  if (fallback) {
-    return {
-      cards: cards.map((c) => (c.col === id ? { ...c, col: fallback.id, updated_at: now } : c)),
-      remaining,
-      fallbackId: fallback.id,
-      movedCardIds: orphans.map((c) => c.id),
-      deletedCardIds: [],
-    };
+  const moves = new Map<string, { track: TrackId; col: ColumnId }>();
+  const deletedCardIds: string[] = [];
+  for (const c of orphans) {
+    const dest = columnsForTrack(remaining, c.track)[0];
+    if (dest) moves.set(c.id, { track: c.track, col: dest.id });
+    else deletedCardIds.push(c.id);
   }
+  const scopeFallback = deleted?.track_id
+    ? columnsForTrack(remaining, deleted.track_id)[0]
+    : remaining.filter((c) => !c.track_id).sort((a, b) => a.order - b.order)[0];
+  const deletedSet = new Set(deletedCardIds);
   return {
-    cards: cards.filter((c) => c.col !== id),
+    cards: relocateOrphans(
+      cards.filter((c) => !deletedSet.has(c.id)),
+      moves,
+      now,
+    ),
     remaining,
-    fallbackId: null,
-    movedCardIds: [],
-    deletedCardIds: orphans.map((c) => c.id),
+    fallbackId: scopeFallback?.id ?? null,
+    movedCardIds: orphans.filter((c) => moves.has(c.id)).map((c) => c.id),
+    deletedCardIds,
   };
 }
 
@@ -163,4 +223,14 @@ export function getVisibleTracks(
   return tracks
     .filter((track) => selected.size === 0 || selected.has(track.id))
     .filter((track) => !hasSearch || filteredCards.some((card) => card.track === track.id));
+}
+
+// Filtro "Hoje" da home: cards com prazo hoje (inclusive os já concluídos, para
+// o usuário ver o que fechou no dia) e cards vencidos que ainda não estão
+// na coluna final da área. `todayIso` é a data local "YYYY-MM-DD" (passada de
+// fora para testar).
+export function isDueTodayOrOverdue(card: Card, todayIso: string, columns: Column[]): boolean {
+  if (!card.date) return false;
+  if (card.date === todayIso) return true;
+  return card.date < todayIso && !isDoneCard(card, columns);
 }

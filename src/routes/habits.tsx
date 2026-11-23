@@ -31,7 +31,7 @@ export const Route = createFileRoute("/habits")({
 });
 
 function HabitsPage() {
-  const { habits, logsByHabit, toggleLog, deleteHabit } = useHabits();
+  const { habits, logsByHabit, loading, error, toggleLog, deleteHabit } = useHabits();
   const { t } = useLocale();
   const [adding, setAdding] = useState(false);
 
@@ -57,7 +57,12 @@ function HabitsPage() {
 
         {adding && <AddHabitForm onClose={() => setAdding(false)} />}
 
-        {habits.length === 0 && !adding ? (
+        {loading || error ? (
+          <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+            {/* TODO i18n: textos fixos em pt (i18n.ts fora de escopo) */}
+            {loading ? "Carregando…" : "Não foi possível carregar os hábitos."}
+          </p>
+        ) : habits.length === 0 && !adding ? (
           <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
             {t("habit_empty")}
           </p>

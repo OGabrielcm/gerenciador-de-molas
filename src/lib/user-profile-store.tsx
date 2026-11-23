@@ -57,7 +57,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const run = async () => {
       setLoading(true);
       // Caminho CRÍTICO: só onboarding_completed controla o loading/render.
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("user_profile")
         .select("onboarding_completed")
         .eq("user_id", user.id)
@@ -65,7 +65,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
 
       if (cancelled) return;
 
-      if (data) {
+      if (error) {
+        // Erro transitório: NÃO insere nem força onboarding; mantém o último valor.
+        console.error("Falha ao carregar perfil do usuário:", error);
+      } else if (data) {
         setOnboardingCompleted(Boolean(data.onboarding_completed));
       } else {
         // Cria a row lazy na primeira sessão (default false).

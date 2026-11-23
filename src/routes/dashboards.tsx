@@ -3,7 +3,8 @@ import { useMemo, useState } from "react";
 import { Archive, Search, Trash2, Download, ChevronDown } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { useKanban } from "@/lib/kanban-store";
-import { formatDate, getDeadlineStatus, isArchived } from "@/lib/kanban-types";
+import { formatDate, getDeadlineStatus, isArchived, isDoneCard } from "@/lib/kanban-types";
+import { parseLocalDate } from "@/lib/date-utils";
 import { exportToCSV, exportToPDF } from "@/lib/dashboard-export";
 import { CardDetailModal } from "@/components/kanban/CardDetailModal";
 import { useTheme } from "@/components/theme-provider";
@@ -50,8 +51,8 @@ function DashboardsPage() {
     if (!dateStr) return null;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const cardDate = new Date(dateStr);
-    cardDate.setHours(0, 0, 0, 0);
+    // Parse local: new Date("YYYY-MM-DD") é lido como UTC e erra o dia em UTC-3.
+    const cardDate = parseLocalDate(dateStr);
     return Math.floor((cardDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   };
 
@@ -64,7 +65,7 @@ function DashboardsPage() {
     return [...cards]
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
       .filter((c) => {
-        const archived = isArchived(c);
+        const archived = isArchived(c, columns);
         if (archiveFilter === "active" && archived) return false;
         if (archiveFilter === "archived" && !archived) return false;
         if (
@@ -75,7 +76,7 @@ function DashboardsPage() {
           return false;
 
         if (deadlineFilter !== "all") {
-          const status = getDeadlineStatus(c);
+          const status = getDeadlineStatus(c, columns);
           if (deadlineFilter === "overdue" && status !== "overdue") return false;
           if (deadlineFilter === "today" && status !== "today") return false;
           if (deadlineFilter === "this_week") {
@@ -94,18 +95,21 @@ function DashboardsPage() {
 
         return true;
       });
-  }, [cards, q, archiveFilter, deadlineFilter, priorityFilter, cardTypeFilter]);
+  }, [cards, columns, q, archiveFilter, deadlineFilter, priorityFilter, cardTypeFilter]);
 
-  const archivedCount = useMemo(() => cards.filter(isArchived).length, [cards]);
+  const archivedCount = useMemo(
+    () => cards.filter((c) => isArchived(c, columns)).length,
+    [cards, columns],
+  );
 
   // ── Estatísticas ──
   const stats = useMemo(() => {
-    const active = cards.filter((c) => !isArchived(c));
+    const active = cards.filter((c) => !isArchived(c, columns));
     const total = active.length;
-    const done = active.filter((c) => c.col === "done").length;
+    const done = active.filter((c) => isDoneCard(c, columns)).length;
     const completionRate = total > 0 ? Math.round((done / total) * 100) : 0;
-    const overdue = active.filter((c) => getDeadlineStatus(c) === "overdue").length;
-    const today = active.filter((c) => getDeadlineStatus(c) === "today").length;
+    const overdue = active.filter((c) => getDeadlineStatus(c, columns) === "overdue").length;
+    const today = active.filter((c) => getDeadlineStatus(c, columns) === "today").length;
 
     // Por coluna
     const byColumn = columns.map((col) => ({
@@ -518,7 +522,7 @@ function DashboardsPage() {
                 {rows.map((c) => {
                   const track = tracks.find((t) => t.id === c.track);
                   const col = columns.find((x) => x.id === c.col);
-                  const archived = isArchived(c);
+                  const archived = isArchived(c, columns);
                   return (
                     <tr
                       key={c.id}
@@ -600,7 +604,6 @@ function DashboardsPage() {
           card={open}
           allCards={cards}
           tracks={tracks}
-          columns={columns}
           trilhas={trilhas}
           onClose={() => setOpenId(null)}
           onMove={moveCard}

@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Calendar,
   CircleCheckBig,
+  Repeat,
   ChevronDown,
   Menu,
   X,
@@ -33,6 +34,7 @@ const NAV_KEYS = [
   { to: "/for-you", labelKey: "nav_for_you" as const, icon: Star },
   { to: "/calendar", labelKey: "nav_calendar" as const, icon: Calendar },
   { to: "/habits", labelKey: "nav_habits" as const, icon: CircleCheckBig },
+  { to: "/routines", labelKey: "nav_routines" as const, icon: Repeat },
   { to: "/dashboards", labelKey: "nav_dashboards" as const, icon: LayoutDashboard },
   { to: "/settings", labelKey: "nav_settings" as const, icon: Settings },
   { to: "/profile", labelKey: "nav_profile" as const, icon: User },
@@ -55,9 +57,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     cards,
     selectedAreaIds,
     setSelectedAreaIds,
+    columns,
   } = useKanban();
   const urgentCount = cards.filter((c) => {
-    const s = getDeadlineStatus(c);
+    const s = getDeadlineStatus(c, columns);
     return s === "overdue" || s === "today";
   }).length;
   const { user, loading, signOut } = useAuth();

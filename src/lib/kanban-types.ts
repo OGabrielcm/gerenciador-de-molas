@@ -622,12 +622,33 @@ export function formatDate(iso?: string) {
   return `${d}/${m}/${y}`;
 }
 
+// Colunas que uma área (track) mostra: as próprias, ordenadas; se não tiver
+// nenhuma, as globais (template). Mesma regra do getColumnsForTrack do provider,
+// que delega para cá.
+export function columnsForTrack(columns: Column[], trackId: TrackId): Column[] {
+  const trackCols = columns.filter((c) => c.track_id === trackId);
+  if (trackCols.length > 0) return trackCols.sort((a, b) => a.order - b.order);
+  return columns.filter((c) => !c.track_id).sort((a, b) => a.order - b.order);
+}
+
+// Card "concluído" = está na ÚLTIMA coluna (maior order) da sua área. Colunas
+// novas têm id UUID, então não dá para comparar com "done"; no legado, "done" já
+// é a última de DEFAULT_COLUMNS. Sem colunas carregadas, vale o id literal "done".
+export function isDoneCard(card: Card, columns: Column[]): boolean {
+  const cols = columnsForTrack(columns, card.track);
+  // Área com uma coluna só não tem "final": senão todo card dela contaria como
+  // concluído e seria arquivado (sumiria do board) depois de 7 dias.
+  if (cols.length === 1) return false;
+  const doneId = cols.length > 0 ? cols[cols.length - 1].id : "done";
+  return card.col === doneId;
+}
+
 // Dias após mover para "Done" que o card é considerado arquivado
 // (some do Board, continua visível no Dashboards)
 export const ARCHIVE_AFTER_DAYS = 7;
 
-export function isArchived(card: Card): boolean {
-  if (card.col !== "done") return false;
+export function isArchived(card: Card, columns: Column[]): boolean {
+  if (!isDoneCard(card, columns)) return false;
   const updated = new Date(card.updated_at).getTime();
   const cutoff = Date.now() - ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
   return updated < cutoff;
@@ -636,8 +657,8 @@ export function isArchived(card: Card): boolean {
 export type DeadlineStatus = "overdue" | "today" | "soon" | null;
 
 // Retorna o status do prazo de um card (ignora cards done/arquivados)
-export function getDeadlineStatus(card: Card): DeadlineStatus {
-  if (!card.date || card.col === "done") return null;
+export function getDeadlineStatus(card: Card, columns: Column[]): DeadlineStatus {
+  if (!card.date || isDoneCard(card, columns)) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const due = new Date(card.date + "T00:00:00");
@@ -652,10 +673,11 @@ export function getDeadlineStatus(card: Card): DeadlineStatus {
 export function getGoalProgress(
   goal: Card,
   allCards: Card[],
+  columns: Column[],
 ): { done: number; total: number; percent: number } {
   const children = allCards.filter((c) => c.parent_id === goal.id);
   if (children.length === 0) return { done: 0, total: 0, percent: 0 };
-  const done = children.filter((c) => c.col === "done").length;
+  const done = children.filter((c) => isDoneCard(c, columns)).length;
   const percent = Math.round((done / children.length) * 100);
   return { done, total: children.length, percent };
 }
@@ -670,12 +692,12 @@ export function getChecklistProgress(card: Card): { done: number; total: number;
 }
 
 // Verifica se um card está bloqueado por dependências não-resolvidas
-export function isBlocked(card: Card, allCards: Card[]): boolean {
+export function isBlocked(card: Card, allCards: Card[], columns: Column[]): boolean {
   const blockers = card.blocked_by ?? [];
   if (blockers.length === 0) return false;
   return blockers.some((blockerId) => {
     const blocker = allCards.find((c) => c.id === blockerId);
-    return blocker && blocker.col !== "done";
+    return blocker && !isDoneCard(blocker, columns);
   });
 }
 

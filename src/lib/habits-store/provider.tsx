@@ -9,6 +9,9 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [logsByHabit, setLogsByHabit] = useState<Record<string, HabitLog[]>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  // Trava toggles em voo por (habitId, date) — evita insert duplicado no duplo clique.
+  const togglingRef = useRef<Set<string>>(new Set());
   const inFlightRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
@@ -16,6 +19,7 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
     if (!user) {
       setHabits([]);
       setLogsByHabit({});
+      setError(null);
       setLoading(false);
       return;
     }
@@ -24,19 +28,22 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
 
     const run = async () => {
       setLoading(true);
-      const list = await HabitsService.fetchHabits();
-      if (cancelled) return;
-      setHabits(list);
-
-      // Carrega os logs de todos os hábitos em paralelo (v1: volume pequeno).
-      const entries = await Promise.all(
-        list.map(async (h) => [h.id, await HabitsService.fetchLogs(h.id)] as const),
-      );
-      if (cancelled) return;
-      const map: Record<string, HabitLog[]> = {};
-      for (const [id, logs] of entries) map[id] = logs;
-      setLogsByHabit(map);
-      setLoading(false);
+      setError(null);
+      try {
+        const list = await HabitsService.fetchHabits();
+        if (cancelled) return;
+        // Uma query só para os logs de todos os hábitos (sem N+1).
+        const map = await HabitsService.fetchLogsForHabits(list.map((h) => h.id));
+        if (cancelled) return;
+        setHabits(list);
+        setLogsByHabit(map);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("Falha ao carregar hábitos:", e);
+        setError(e instanceof Error ? e : new Error(String(e)));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
 
     if (!inFlightRef.current) {
@@ -59,26 +66,39 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteHabit = async (habitId: string) => {
-    await HabitsService.deleteHabit(setHabits, setLogsByHabit, habitId);
+    await HabitsService.deleteHabit(
+      setHabits,
+      setLogsByHabit,
+      habitId,
+      habits.find((h) => h.id === habitId),
+      logsByHabit[habitId] ?? [],
+    );
   };
 
   const toggleLog = async (habitId: string, date: string) => {
     if (!user) return;
-    await HabitsService.toggleLog(
-      setLogsByHabit,
-      logsByHabit[habitId] ?? [],
-      user.id,
-      habitId,
-      date,
-    );
+    const key = `${habitId}|${date}`;
+    if (togglingRef.current.has(key)) return;
+    togglingRef.current.add(key);
+    try {
+      await HabitsService.toggleLog(
+        setLogsByHabit,
+        logsByHabit[habitId] ?? [],
+        user.id,
+        habitId,
+        date,
+      );
+    } finally {
+      togglingRef.current.delete(key);
+    }
   };
 
   const value = useMemo(
-    () => ({ habits, logsByHabit, loading, addHabit, deleteHabit, toggleLog }),
+    () => ({ habits, logsByHabit, loading, error, addHabit, deleteHabit, toggleLog }),
     // addHabit/deleteHabit/toggleLog são closures estáveis o suficiente; o que
     // muda o value é o estado (habits/logsByHabit/loading).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [habits, logsByHabit, loading],
+    [habits, logsByHabit, loading, error],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

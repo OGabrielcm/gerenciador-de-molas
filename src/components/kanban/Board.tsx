@@ -22,7 +22,8 @@ import {
   Trilha,
 } from "@/lib/kanban-types";
 import { useKanban } from "@/lib/kanban-store";
-import { getVisibleTracks } from "@/lib/kanban-store/kanban-logic";
+import { getVisibleTracks, isDueTodayOrOverdue } from "@/lib/kanban-store/kanban-logic";
+import { toLocalIso } from "@/lib/date-utils";
 import { useTheme } from "@/components/theme-provider";
 import { CardItem } from "./CardItem";
 import { AddCardModal } from "./AddCardModal";
@@ -43,6 +44,9 @@ export function Board() {
     filter,
     setFilter,
     selectedAreaIds,
+    loading,
+    loadError,
+    reload,
     addCard,
     updateCard,
     moveCard,
@@ -74,6 +78,8 @@ export function Board() {
   const [tracksOpen, setTracksOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState<string | false>(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  // Home abre mostrando só o que vence hoje (e vencidos). Um clique mostra tudo.
+  const [todayOnly, setTodayOnly] = useState(true);
   const filterRef = useRef<HTMLDivElement>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<{ track: TrackId; col: ColumnId } | null>(null);
@@ -95,8 +101,11 @@ export function Board() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const todayIso = toLocalIso(new Date());
     return cards.filter((c) => {
-      if (isArchived(c)) return false;
+      if (isArchived(c, columns)) return false;
+      // Busca ativa procura em todos os cards, não só nos de hoje.
+      if (todayOnly && !q && !isDueTodayOrOverdue(c, todayIso, columns)) return false;
       if (filter !== "__all" && !c.tags.includes(filter)) return false;
       if (q) {
         const inTitle = c.title.toLowerCase().includes(q);
@@ -106,9 +115,15 @@ export function Board() {
       }
       return true;
     });
-  }, [cards, filter, search, trilhaNameById]);
+  }, [cards, columns, filter, search, trilhaNameById, todayOnly]);
 
-  const archivedCount = useMemo(() => cards.filter(isArchived).length, [cards]);
+  // "Todos" só fica marcado sem etiqueta e sem o filtro "Hoje".
+  const allActive = filter === "__all" && !todayOnly;
+
+  const archivedCount = useMemo(
+    () => cards.filter((c) => isArchived(c, columns)).length,
+    [cards, columns],
+  );
 
   const goals = useMemo(() => cards.filter((c) => c.type === "Goal"), [cards]);
   const liveOpenCard = openCardId ? (cards.find((c) => c.id === openCardId) ?? null) : null;
@@ -142,7 +157,7 @@ export function Board() {
       ) {
         e.preventDefault();
         const firstTrack = tracks[0];
-        const firstCol = columns[0];
+        const firstCol = firstTrack ? getColumnsForTrack(firstTrack.id)[0] : undefined;
         if (firstTrack && firstCol) {
           setAdding({ track: firstTrack.id, col: firstCol.id });
         }
@@ -150,7 +165,16 @@ export function Board() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openCardId, adding, trilhasOpen, tracksOpen, columnsOpen, filterOpen, tracks, columns]);
+  }, [
+    openCardId,
+    adding,
+    trilhasOpen,
+    tracksOpen,
+    columnsOpen,
+    filterOpen,
+    tracks,
+    getColumnsForTrack,
+  ]);
 
   useEffect(() => {
     if (!filterOpen) return;
@@ -170,6 +194,30 @@ export function Board() {
     setTrackDropTarget(null);
   };
 
+  // Carga em andamento ou falhou: não mostra o estado vazio ("crie sua primeira
+  // área"), que faria parecer que o usuário não tem dados.
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-xs text-muted-foreground">
+        {t("board_loading")}
+      </div>
+    );
+  }
+  if (loadError) {
+    return (
+      <div className="m-4 flex flex-col items-center gap-3 rounded-lg border border-dashed py-16 text-center sm:m-6">
+        <p className="text-sm font-semibold text-foreground">{t("board_load_error_title")}</p>
+        <p className="text-xs text-muted-foreground">{t("board_load_error_desc")}</p>
+        <button
+          onClick={reload}
+          className="inline-flex items-center gap-1.5 rounded-sm bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+        >
+          {t("board_retry")}
+        </button>
+      </div>
+    );
+  }
+
   return (
     // kb-dragging: durante o arraste, desliga a box-shadow dos cards (existe só
     // no modo claro) para baratear o repaint ao rolar entre colunas — origem da
@@ -179,14 +227,31 @@ export function Board() {
       {/* Filter bar */}
       <div className="sticky top-12 z-[5] border-b bg-background/80 px-3 py-2 backdrop-blur sm:px-6">
         <div className="flex items-center gap-1.5">
-          {/* Chip "Todos" */}
+          {/* Chip "Hoje": prazo hoje + vencidos */}
           <button
-            onClick={() => setFilter("__all")}
+            onClick={() => setTodayOnly((v) => !v)}
+            aria-pressed={todayOnly}
             className="whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors"
             style={{
-              backgroundColor: filter === "__all" ? "var(--foreground)" : "transparent",
-              color: filter === "__all" ? "var(--background)" : "var(--muted-foreground)",
-              border: `0.5px solid ${filter === "__all" ? "var(--foreground)" : "var(--border)"}`,
+              backgroundColor: todayOnly ? "var(--foreground)" : "transparent",
+              color: todayOnly ? "var(--background)" : "var(--muted-foreground)",
+              border: `0.5px solid ${todayOnly ? "var(--foreground)" : "var(--border)"}`,
+            }}
+          >
+            {t("today_btn")}
+          </button>
+
+          {/* Chip "Todos" */}
+          <button
+            onClick={() => {
+              setFilter("__all");
+              setTodayOnly(false);
+            }}
+            className="whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              backgroundColor: allActive ? "var(--foreground)" : "transparent",
+              color: allActive ? "var(--background)" : "var(--muted-foreground)",
+              border: `0.5px solid ${allActive ? "var(--foreground)" : "var(--border)"}`,
             }}
           >
             {t("all")}
@@ -411,7 +476,6 @@ export function Board() {
           column={adding.col}
           track={adding.track}
           tracks={tracks}
-          columns={columns}
           trilhas={trilhas}
           goals={goals}
           templates={templates}
@@ -424,7 +488,6 @@ export function Board() {
           card={liveOpenCard}
           allCards={cards}
           tracks={tracks}
-          columns={columns}
           trilhas={trilhas}
           onClose={() => setOpenCardId(null)}
           onMove={moveCard}
@@ -642,7 +705,11 @@ function Swimlane({
   const { theme } = useTheme();
   const sectionRef = useRef<HTMLElement>(null);
   const { t } = useLocale();
-  const inProgress = cards.filter((c) => c.col === "inprogress").length;
+  // "Em andamento" = cards nas colunas intermediárias da área (nem a primeira
+  // nem a última). Colunas novas têm id UUID, não dá para procurar por
+  // "inprogress". Com menos de 3 colunas não há intermediária e a contagem é 0.
+  const middleColIds = new Set(columns.slice(1, -1).map((col) => col.id));
+  const inProgress = cards.filter((c) => middleColIds.has(c.col)).length;
   const bg = track.darkBg;
   const fg = track.darkFg;
 
