@@ -4,7 +4,14 @@ import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-reac
 import { AppShell } from "@/components/shell/AppShell";
 import { useKanban } from "@/lib/kanban-store";
 import { CardDetailModal } from "@/components/kanban/CardDetailModal";
-import { Card, isArchived, getDeadlineStatus, PRIO_COLORS, formatDate } from "@/lib/kanban-types";
+import {
+  Card,
+  isArchived,
+  isDoneCard,
+  getDeadlineStatus,
+  PRIO_COLORS,
+  formatDate,
+} from "@/lib/kanban-types";
 import { useTheme } from "@/components/theme-provider";
 import { useLocale } from "@/lib/locale-context";
 import {
@@ -90,7 +97,10 @@ function CalendarPage() {
   }, []);
 
   // Apenas cards com prazo e não arquivados
-  const datedCards = useMemo(() => cards.filter((c) => c.date && !isArchived(c)), [cards]);
+  const datedCards = useMemo(
+    () => cards.filter((c) => c.date && !isArchived(c, columns)),
+    [cards, columns],
+  );
 
   // Index: ISO date → cards naquele dia
   const cardsByDate = useMemo(() => {
@@ -229,7 +239,6 @@ function CalendarPage() {
           card={open}
           allCards={cards}
           tracks={tracks}
-          columns={columns}
           trilhas={trilhas}
           onClose={() => setOpenId(null)}
           onMove={moveCard}
@@ -263,6 +272,7 @@ function MonthView({
   onOpenCard: (id: string) => void;
 }) {
   const { locale } = useLocale();
+  const { columns } = useKanban();
   const WEEKDAYS_PT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const WEEKDAYS = locale === "pt" ? WEEKDAYS_PT : WEEKDAYS_EN;
@@ -330,8 +340,8 @@ function MonthView({
               <div className="mt-1 flex flex-col gap-0.5">
                 {dayCards.slice(0, 3).map((c) => {
                   const track = tracks.find((t) => t.id === c.track);
-                  const status = getDeadlineStatus(c);
-                  const isDone = c.col === "done";
+                  const status = getDeadlineStatus(c, columns);
+                  const isDone = isDoneCard(c, columns);
                   return (
                     <button
                       key={c.id}
@@ -387,6 +397,7 @@ function WeekView({
   onOpenCard: (id: string) => void;
 }) {
   const { t, locale } = useLocale();
+  const { columns } = useKanban();
   const WEEKDAYS_PT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const WEEKDAYS = locale === "pt" ? WEEKDAYS_PT : WEEKDAYS_EN;
@@ -441,8 +452,8 @@ function WeekView({
                 )}
                 {dayCards.map((c) => {
                   const track = tracks.find((t) => t.id === c.track);
-                  const status = getDeadlineStatus(c);
-                  const isDone = c.col === "done";
+                  const status = getDeadlineStatus(c, columns);
+                  const isDone = isDoneCard(c, columns);
                   const prioRaw = PRIO_COLORS[c.prio];
                   const prio =
                     theme === "dark"
@@ -511,6 +522,7 @@ function ListView({
   onOpenCard: (id: string) => void;
 }) {
   const { t, locale } = useLocale();
+  const { columns } = useKanban();
   const WEEKDAYS_PT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const WEEKDAYS = locale === "pt" ? WEEKDAYS_PT : WEEKDAYS_EN;
@@ -577,8 +589,8 @@ function ListView({
             >
               {dayCards.map((c) => {
                 const track = tracks.find((t) => t.id === c.track);
-                const status = getDeadlineStatus(c);
-                const isDone = c.col === "done";
+                const status = getDeadlineStatus(c, columns);
+                const isDone = isDoneCard(c, columns);
                 const prioRaw = PRIO_COLORS[c.prio];
                 const prio =
                   theme === "dark"

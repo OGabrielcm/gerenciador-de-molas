@@ -10,8 +10,10 @@ import {
   formatMinutes,
   formatDate,
   ARCHIVE_AFTER_DAYS,
+  columnsForTrack,
+  isDoneCard,
 } from "./kanban-types";
-import type { Card, ChecklistItem } from "./kanban-types";
+import type { Card, ChecklistItem, Column } from "./kanban-types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -48,37 +50,37 @@ describe("getDeadlineStatus", () => {
 
   it("returns null when card has no date", () => {
     const card = makeCard({ date: undefined });
-    expect(getDeadlineStatus(card)).toBeNull();
+    expect(getDeadlineStatus(card, [])).toBeNull();
   });
 
   it("returns null when card is in 'done' column", () => {
     const card = makeCard({ col: "done", date: "2025-06-10" });
-    expect(getDeadlineStatus(card)).toBeNull();
+    expect(getDeadlineStatus(card, [])).toBeNull();
   });
 
   it("returns 'overdue' for a past date", () => {
     const card = makeCard({ date: "2025-06-11" }); // yesterday
-    expect(getDeadlineStatus(card)).toBe("overdue");
+    expect(getDeadlineStatus(card, [])).toBe("overdue");
   });
 
   it("returns 'today' for today's date", () => {
     const card = makeCard({ date: TODAY });
-    expect(getDeadlineStatus(card)).toBe("today");
+    expect(getDeadlineStatus(card, [])).toBe("today");
   });
 
   it("returns 'soon' for a date 1 day away", () => {
     const card = makeCard({ date: "2025-06-13" });
-    expect(getDeadlineStatus(card)).toBe("soon");
+    expect(getDeadlineStatus(card, [])).toBe("soon");
   });
 
   it("returns 'soon' for a date exactly 3 days away", () => {
     const card = makeCard({ date: "2025-06-15" });
-    expect(getDeadlineStatus(card)).toBe("soon");
+    expect(getDeadlineStatus(card, [])).toBe("soon");
   });
 
   it("returns null for a date 4+ days away", () => {
     const card = makeCard({ date: "2025-06-16" });
-    expect(getDeadlineStatus(card)).toBeNull();
+    expect(getDeadlineStatus(card, [])).toBeNull();
   });
 });
 
@@ -93,18 +95,18 @@ describe("isArchived", () => {
 
   it("returns false when card is not in done column", () => {
     const card = makeCard({ col: "inprogress", updated_at: "2025-05-01T00:00:00Z" });
-    expect(isArchived(card)).toBe(false);
+    expect(isArchived(card, [])).toBe(false);
   });
 
   it("returns false when done but updated recently (< 7 days)", () => {
     const card = makeCard({ col: "done", updated_at: "2025-06-10T00:00:00Z" });
-    expect(isArchived(card)).toBe(false);
+    expect(isArchived(card, [])).toBe(false);
   });
 
   it(`returns true when done and updated more than ${ARCHIVE_AFTER_DAYS} days ago`, () => {
     // 8 days ago
     const card = makeCard({ col: "done", updated_at: "2025-06-04T00:00:00Z" });
-    expect(isArchived(card)).toBe(true);
+    expect(isArchived(card, [])).toBe(true);
   });
 
   it("returns false exactly at the cutoff boundary (7 days)", () => {
@@ -113,7 +115,7 @@ describe("isArchived", () => {
     const sevenDaysAgo = new Date("2025-06-12T12:00:00Z").getTime() - 7 * 24 * 60 * 60 * 1000;
     const card = makeCard({ col: "done", updated_at: new Date(sevenDaysAgo).toISOString() });
     // updated < cutoff => updated === cutoff is NOT < cutoff => false
-    expect(isArchived(card)).toBe(false);
+    expect(isArchived(card, [])).toBe(false);
   });
 });
 
@@ -122,32 +124,32 @@ describe("isArchived", () => {
 describe("isBlocked", () => {
   it("returns false when blocked_by is empty", () => {
     const card = makeCard({ blocked_by: [] });
-    expect(isBlocked(card, [])).toBe(false);
+    expect(isBlocked(card, [], [])).toBe(false);
   });
 
   it("returns true when a blocker is not done", () => {
     const blocker = makeCard({ id: "b-1", col: "inprogress" });
     const card = makeCard({ blocked_by: ["b-1"] });
-    expect(isBlocked(card, [blocker])).toBe(true);
+    expect(isBlocked(card, [blocker], [])).toBe(true);
   });
 
   it("returns false when all blockers are done", () => {
     const blocker = makeCard({ id: "b-1", col: "done" });
     const card = makeCard({ blocked_by: ["b-1"] });
-    expect(isBlocked(card, [blocker])).toBe(false);
+    expect(isBlocked(card, [blocker], [])).toBe(false);
   });
 
   it("returns true when at least one blocker is not done", () => {
     const b1 = makeCard({ id: "b-1", col: "done" });
     const b2 = makeCard({ id: "b-2", col: "review" });
     const card = makeCard({ blocked_by: ["b-1", "b-2"] });
-    expect(isBlocked(card, [b1, b2])).toBe(true);
+    expect(isBlocked(card, [b1, b2], [])).toBe(true);
   });
 
   it("returns false when blocker id references a card not in allCards", () => {
     // Blocker not found => blocker is undefined => condition is false
     const card = makeCard({ blocked_by: ["non-existent-id"] });
-    expect(isBlocked(card, [])).toBe(false);
+    expect(isBlocked(card, [], [])).toBe(false);
   });
 });
 
@@ -156,14 +158,18 @@ describe("isBlocked", () => {
 describe("getGoalProgress", () => {
   it("returns zeros when goal has no children", () => {
     const goal = makeCard({ id: "goal-1", type: "Goal" });
-    expect(getGoalProgress(goal, [])).toEqual({ done: 0, total: 0, percent: 0 });
+    expect(getGoalProgress(goal, [], [])).toEqual({ done: 0, total: 0, percent: 0 });
   });
 
   it("returns 100% when all children are done", () => {
     const goal = makeCard({ id: "goal-1" });
     const child1 = makeCard({ id: "c1", parent_id: "goal-1", col: "done" });
     const child2 = makeCard({ id: "c2", parent_id: "goal-1", col: "done" });
-    expect(getGoalProgress(goal, [child1, child2])).toEqual({ done: 2, total: 2, percent: 100 });
+    expect(getGoalProgress(goal, [child1, child2], [])).toEqual({
+      done: 2,
+      total: 2,
+      percent: 100,
+    });
   });
 
   it("calculates partial progress correctly", () => {
@@ -171,7 +177,7 @@ describe("getGoalProgress", () => {
     const c1 = makeCard({ id: "c1", parent_id: "goal-1", col: "done" });
     const c2 = makeCard({ id: "c2", parent_id: "goal-1", col: "inprogress" });
     const c3 = makeCard({ id: "c3", parent_id: "goal-1", col: "todo" });
-    const result = getGoalProgress(goal, [c1, c2, c3]);
+    const result = getGoalProgress(goal, [c1, c2, c3], []);
     expect(result.done).toBe(1);
     expect(result.total).toBe(3);
     expect(result.percent).toBe(33); // Math.round(1/3*100)
@@ -180,7 +186,7 @@ describe("getGoalProgress", () => {
   it("only counts direct children (matching parent_id)", () => {
     const goal = makeCard({ id: "goal-1" });
     const otherGoalChild = makeCard({ id: "c1", parent_id: "goal-99", col: "done" });
-    expect(getGoalProgress(goal, [otherGoalChild])).toEqual({ done: 0, total: 0, percent: 0 });
+    expect(getGoalProgress(goal, [otherGoalChild], [])).toEqual({ done: 0, total: 0, percent: 0 });
   });
 });
 
@@ -310,5 +316,80 @@ describe("formatDate", () => {
 
   it("converts a different date correctly", () => {
     expect(formatDate("2024-01-05")).toBe("05/01/2024");
+  });
+});
+
+// ── columnsForTrack / isDoneCard ──────────────────────────────────────────────
+
+describe("columnsForTrack", () => {
+  const globals: Column[] = [
+    { id: "g2", name: "Feito", order: 2 },
+    { id: "g1", name: "A fazer", order: 1 },
+  ];
+  const own: Column[] = [
+    { id: "o2", name: "Fim", order: 9, track_id: "t1" },
+    { id: "o1", name: "Início", order: 0, track_id: "t1" },
+  ];
+
+  it("usa as colunas próprias da área, ordenadas", () => {
+    expect(columnsForTrack([...globals, ...own], "t1").map((c) => c.id)).toEqual(["o1", "o2"]);
+  });
+
+  it("cai nas colunas globais quando a área não tem próprias", () => {
+    expect(columnsForTrack([...globals, ...own], "t2").map((c) => c.id)).toEqual(["g1", "g2"]);
+  });
+});
+
+describe("isDoneCard", () => {
+  const uuidCols: Column[] = [
+    { id: "a1b2-todo", name: "A fazer", order: 0 },
+    { id: "a1b2-doing", name: "Fazendo", order: 1 },
+    { id: "a1b2-done", name: "Feito", order: 2 },
+  ];
+
+  it("card na última coluna (id UUID) conta como concluído", () => {
+    expect(isDoneCard(makeCard({ col: "a1b2-done" }), uuidCols)).toBe(true);
+    expect(isDoneCard(makeCard({ col: "a1b2-doing" }), uuidCols)).toBe(false);
+  });
+
+  it("área com uma coluna só não tem coluna final", () => {
+    const one: Column[] = [{ id: "only", name: "Ideias", order: 0 }];
+    expect(isDoneCard(makeCard({ col: "only" }), one)).toBe(false);
+  });
+
+  it('id literal "done" que não é a última coluna não conta', () => {
+    const cols: Column[] = [
+      { id: "done", name: "Done", order: 0 },
+      { id: "x", name: "Arquivo", order: 5 },
+    ];
+    expect(isDoneCard(makeCard({ col: "done" }), cols)).toBe(false);
+    expect(isDoneCard(makeCard({ col: "x" }), cols)).toBe(true);
+  });
+
+  it("colunas da área têm prioridade sobre as globais", () => {
+    const cols: Column[] = [
+      { id: "g-last", name: "Global fim", order: 9 },
+      { id: "t-last", name: "Fim", order: 3, track_id: "track-1" },
+      { id: "t-first", name: "Início", order: 1, track_id: "track-1" },
+    ];
+    expect(isDoneCard(makeCard({ col: "t-last" }), cols)).toBe(true);
+    expect(isDoneCard(makeCard({ col: "g-last" }), cols)).toBe(false);
+  });
+
+  it('sem colunas, vale o id literal "done"', () => {
+    expect(isDoneCard(makeCard({ col: "done" }), [])).toBe(true);
+    expect(isDoneCard(makeCard({ col: "todo" }), [])).toBe(false);
+  });
+
+  it("isBlocked/getGoalProgress/getDeadlineStatus/isArchived usam a última coluna", () => {
+    const blocker = makeCard({ id: "b", col: "a1b2-done" });
+    const card = makeCard({ id: "c", blocked_by: ["b"], date: "2000-01-01" });
+    expect(isBlocked(card, [blocker], uuidCols)).toBe(false);
+    const goal = makeCard({ id: "g", type: "Goal" });
+    const child = makeCard({ id: "k", parent_id: "g", col: "a1b2-done" });
+    expect(getGoalProgress(goal, [child], uuidCols).done).toBe(1);
+    expect(getDeadlineStatus({ ...card, col: "a1b2-done" }, uuidCols)).toBeNull();
+    const old = new Date(Date.now() - (ARCHIVE_AFTER_DAYS + 1) * 86400000).toISOString();
+    expect(isArchived(makeCard({ col: "a1b2-done", updated_at: old }), uuidCols)).toBe(true);
   });
 });

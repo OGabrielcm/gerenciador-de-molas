@@ -3,6 +3,7 @@ import { Plus, Trash2, Clock } from "lucide-react";
 import { formatDate, formatMinutes } from "@/lib/kanban-types";
 import { useKanban } from "@/lib/kanban-store";
 import { useLocale } from "@/lib/locale-context";
+import { toLocalIso } from "@/lib/date-utils";
 
 export function TimeTrackingSection({ cardId }: { cardId: string }) {
   const { timeLogsByCard, addTimeLog, deleteTimeLog } = useKanban();
@@ -12,7 +13,7 @@ export function TimeTrackingSection({ cardId }: { cardId: string }) {
   const [hours, setHours] = useState("");
   const [minutes, setMinutes] = useState("");
   const [note, setNote] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(toLocalIso(new Date()));
 
   const total = useMemo(() => logs.reduce((acc, l) => acc + l.minutes, 0), [logs]);
 

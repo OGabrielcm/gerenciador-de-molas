@@ -40,16 +40,34 @@ export async function updateComment(
 ): Promise<void> {
   const now = new Date().toISOString();
   const trimmed = text.trim();
+  let previous: Comment | undefined;
   setComments((cur) => {
     const next: Record<string, Comment[]> = {};
     for (const k of Object.keys(cur)) {
-      next[k] = cur[k].map((c) =>
-        c.id === commentId ? { ...c, text: trimmed, updated_at: now } : c,
-      );
+      next[k] = cur[k].map((c) => {
+        if (c.id !== commentId) return c;
+        previous = c;
+        return { ...c, text: trimmed, updated_at: now };
+      });
     }
     return next;
   });
-  await supabase.from("comments").update({ text: trimmed, updated_at: now }).eq("id", commentId);
+  const { error } = await supabase
+    .from("comments")
+    .update({ text: trimmed, updated_at: now })
+    .eq("id", commentId);
+  if (error && previous) {
+    // rollback: restaura o comentário anterior
+    console.error("Falha ao editar comentário:", error);
+    const prev = previous;
+    setComments((cur) => {
+      const next: Record<string, Comment[]> = {};
+      for (const k of Object.keys(cur)) {
+        next[k] = cur[k].map((c) => (c.id === commentId ? prev : c));
+      }
+      return next;
+    });
+  }
 }
 
 export async function deleteComment(
@@ -57,9 +75,24 @@ export async function deleteComment(
   commentId: string,
   cardId: string,
 ): Promise<void> {
-  setComments((cur) => ({
-    ...cur,
-    [cardId]: (cur[cardId] ?? []).filter((c) => c.id !== commentId),
-  }));
-  await supabase.from("comments").delete().eq("id", commentId);
+  let removed: Comment | undefined;
+  setComments((cur) => {
+    removed = (cur[cardId] ?? []).find((c) => c.id === commentId);
+    return {
+      ...cur,
+      [cardId]: (cur[cardId] ?? []).filter((c) => c.id !== commentId),
+    };
+  });
+  const { error } = await supabase.from("comments").delete().eq("id", commentId);
+  if (error && removed) {
+    // rollback: devolve o comentário (ordem created_at desc)
+    console.error("Falha ao excluir comentário:", error);
+    const restored = removed;
+    setComments((cur) => ({
+      ...cur,
+      [cardId]: [...(cur[cardId] ?? []).filter((c) => c.id !== commentId), restored].sort((a, b) =>
+        b.created_at.localeCompare(a.created_at),
+      ),
+    }));
+  }
 }

@@ -22,6 +22,8 @@ async function getUserId(): Promise<string | null> {
 
 export const kanbanRepo = {
   // Carga inicial: as quatro entidades em paralelo, na ordem usada pelo board.
+  // Lança o primeiro erro: devolver [] em caso de falha fazia o board parecer
+  // vazio ("crie sua primeira área") quando na verdade a carga tinha falhado.
   async loadAll() {
     const [cards, trilhas, tracks, columns] = await Promise.all([
       supabase.from("tasks").select("*").order("created_at"),
@@ -29,6 +31,8 @@ export const kanbanRepo = {
       supabase.from("tracks").select("*").order("order"),
       supabase.from("columns").select("*").order("order"),
     ]);
+    const error = cards.error ?? trilhas.error ?? tracks.error ?? columns.error;
+    if (error) throw error;
     return {
       cards: cards.data ?? [],
       trilhas: trilhas.data ?? [],
@@ -48,13 +52,9 @@ export const kanbanRepo = {
         .single(),
     update: (id: string, patch: Row) => supabase.from("tasks").update(patch).eq("id", id),
     remove: (id: string) => supabase.from("tasks").delete().eq("id", id),
-    // Cascata: reatribui ou apaga cards de uma track/coluna deletada.
-    reassignTrack: (fromTrack: string, toTrack: string, now: string) =>
-      supabase.from("tasks").update({ track: toTrack, updated_at: now }).eq("track", fromTrack),
+    // Cascata: apaga os cards de uma track deletada. Na deleção de coluna e na
+    // reatribuição, o provider age card a card (cada card tem col/order próprios).
     deleteByTrack: (track: string) => supabase.from("tasks").delete().eq("track", track),
-    reassignColumn: (fromCol: string, toCol: string, now: string) =>
-      supabase.from("tasks").update({ col: toCol, updated_at: now }).eq("col", fromCol),
-    deleteByColumn: (col: string) => supabase.from("tasks").delete().eq("col", col),
   },
 
   trilhas: {

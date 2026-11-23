@@ -17,7 +17,16 @@
 // cascata de delete) em kanban-logic.ts (testada). Slices independentes
 // (card-details, templates, card-colors) compostos via hooks.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Card, Column, Track, Trilha, loadCollapsed, saveCollapsed } from "../kanban-types";
+import { generateDueRoutineCards } from "../routines-service";
+import {
+  Card,
+  Column,
+  Track,
+  Trilha,
+  columnsForTrack,
+  loadCollapsed,
+  saveCollapsed,
+} from "../kanban-types";
 import { useAuth } from "../auth-store";
 import { Ctx, KanbanCtx } from "./context";
 import {
@@ -39,6 +48,39 @@ import { useCardDetails } from "./use-card-details";
 import { useTemplates } from "./use-templates";
 import { useCardColors } from "./use-card-colors";
 
+// Persiste, card a card, o novo track/col/order dos órfãos de uma deleção em
+// cascata (cada um pode ter destino e order próprios). Devolve os ids cujo
+// update falhou (vazio = tudo salvo).
+async function persistMovedCards(after: Card[], movedIds: string[]): Promise<Set<string>> {
+  const moved = movedIds
+    .map((id) => after.find((c) => c.id === id))
+    .filter((c): c is Card => Boolean(c));
+  const results = await Promise.all(
+    moved.map((c) =>
+      kanbanRepo.tasks.update(c.id, {
+        track: c.track,
+        col: c.col,
+        order: c.order,
+        updated_at: c.updated_at,
+      }),
+    ),
+  );
+  const failed = new Set<string>();
+  results.forEach((r, i) => {
+    if (r.error) failed.add(moved[i].id);
+  });
+  if (failed.size > 0) {
+    const firstError = results.find((r) => r.error)?.error;
+    console.error("[cascade] Falha ao mover cards no Supabase:", firstError);
+  }
+  return failed;
+}
+
+// Versão anterior de `card` em `before` (ou o próprio card, se não existir).
+function snapshotOf(before: Card[], card: Card): Card {
+  return before.find((c) => c.id === card.id) ?? card;
+}
+
 export function KanbanProvider({ children }: { children: ReactNode }) {
   const [cards, setCards] = useState<Card[]>([]);
   const [trilhas, setTrilhas] = useState<Trilha[]>([]);
@@ -52,6 +94,9 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
   const [selectedAreaIds, setSelectedAreaIds] = useState<string[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Incrementado por `reload` para refazer a carga (botão "Tentar de novo").
+  const [reloadKey, setReloadKey] = useState(0);
 
   const {
     activitiesByCard,
@@ -61,6 +106,7 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
     currentUserIdRef,
     logActivity,
     loadCardDetails,
+    resetCardDetails,
     addComment,
     updateComment,
     deleteComment,
@@ -118,64 +164,85 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
   // (leitura local, sem race) e expõe user/loading; este efeito reage a eles —
   // um único gatilho, igual ao padrão de user-profile-store.
   const { user, loading: authLoading } = useAuth();
-  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  // Cada execução do efeito de load recebe um número de sequência; só a MAIS
+  // RECENTE aplica resultado/erro e encerra o loading. Substitui o antigo
+  // `loadInFlightRef` + `cancelled`: com eles, uma execução nova (reload, troca
+  // de conta) era pulada enquanto a anterior estava em voo, e a anterior saía
+  // pelo `cancelled` sem aplicar nada → loading preso para sempre.
+  const loadSeqRef = useRef(0);
+  // Usuário dono do estado em memória. Quando muda (inclui logout), tudo que é
+  // da conta anterior é descartado antes de carregar a nova.
+  const loadedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Aguarda o auth-store hidratar a sessão antes de decidir.
     if (authLoading) return;
 
-    // Sem usuário (sessão expirada/deslogado): limpa o estado e encerra o
-    // loading — o guard do AppShell (!user && !loading) redireciona ao /login,
-    // em vez de skeleton infinito e silencioso.
-    if (!user) {
+    const userId = user?.id ?? null;
+    if (userId !== loadedUserIdRef.current) {
+      loadedUserIdRef.current = userId;
       setCards([]);
       setTrilhas([]);
       setTracks([]);
       setColumns([]);
+      resetCardDetails();
+      setSelectedAreaIds([]);
+      setFilter("__all");
+      setSearch("");
+    }
+
+    // Invalida qualquer load anterior ainda em voo.
+    const seq = ++loadSeqRef.current;
+
+    // Sem usuário (sessão expirada/deslogado): estado já limpo acima; encerra o
+    // loading — o guard do AppShell (!user && !loading) redireciona ao /login,
+    // em vez de skeleton infinito e silencioso.
+    if (!user) {
       currentUserIdRef.current = null;
-      loadInFlightRef.current = null;
+      setLoadError(null);
       setLoading(false);
       return;
     }
 
-    let cancelled = false;
     currentUserIdRef.current = user.id;
+    setLoading(true);
+    setLoadError(null);
 
     const runLoad = async () => {
-      // Sem seed automático: trilhas, tracks, columns e cards iniciais
-      // são criadas pelo usuário no Onboarding Beta (e depois em /settings).
-      const {
-        cards: dbCards,
-        trilhas: dbTrilhas,
-        tracks: dbTracks,
-        columns: dbColumns,
-      } = await kanbanRepo.loadAll();
+      try {
+        // Sem seed automático: trilhas, tracks, columns e cards iniciais
+        // são criadas pelo usuário no Onboarding Beta (e depois em /settings).
+        const {
+          cards: dbCards,
+          trilhas: dbTrilhas,
+          tracks: dbTracks,
+          columns: dbColumns,
+        } = await kanbanRepo.loadAll();
 
-      if (cancelled) return;
+        if (seq !== loadSeqRef.current) return;
 
-      setTracks(dbTracks.map(rowToTrack));
-      setCards(dbCards.map(rowToCard));
-      setTrilhas(dbTrilhas.map(rowToTrilha));
-      setColumns(dbColumns.map(rowToColumn).sort((a, b) => a.order - b.order));
-      setLoading(false);
+        setTracks(dbTracks.map(rowToTrack));
+        setCards(dbCards.map(rowToCard));
+        setTrilhas(dbTrilhas.map(rowToTrilha));
+        setColumns(dbColumns.map(rowToColumn).sort((a, b) => a.order - b.order));
+      } catch (err) {
+        if (seq !== loadSeqRef.current) return;
+        console.error("[loadAll] Falha ao carregar o board:", err);
+        const message = (err as { message?: unknown } | null)?.message;
+        setLoadError(typeof message === "string" && message ? message : String(err));
+      } finally {
+        // Loading SEMPRE termina (sucesso ou erro) para a execução vigente.
+        if (seq === loadSeqRef.current) setLoading(false);
+      }
     };
 
-    // Dedup de fetches concorrentes redundantes (StrictMode + re-render).
-    if (!loadInFlightRef.current) {
-      loadInFlightRef.current = runLoad().finally(() => {
-        loadInFlightRef.current = null;
-      });
-    }
-
-    return () => {
-      cancelled = true;
-    };
+    void runLoad();
     // Depende de user?.id (primitivo estável), NÃO do objeto `user`: o auth-store
     // recria session?.user a cada setSession (INITIAL_SESSION → SIGNED_IN →
     // TOKEN_REFRESHED no reload). Chavear pelo objeto causaria re-runs espúrios
-    // que cancelavam o load em voo e travavam o board no skeleton (Bloco 2.1).
+    // (Bloco 2.1). `reloadKey` muda só via `reload`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, authLoading]);
+  }, [user?.id, authLoading, reloadKey]);
 
   useEffect(() => {
     saveCollapsed(collapsed);
@@ -323,24 +390,38 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       },
 
       deleteCard: async (id: string) => {
+        const snapshot = stateRef.current.cards.find((c) => c.id === id);
         setCards((cur) => cur.filter((c) => c.id !== id));
-        await kanbanRepo.tasks.remove(id);
+        const { error: deleteError } = await kanbanRepo.tasks.remove(id);
+        if (deleteError) {
+          // Rollback optimistic update.
+          if (snapshot) setCards((cur) => [...cur, snapshot]);
+          console.error("[deleteCard] Falha ao salvar no Supabase:", deleteError);
+        }
       },
 
       toggleStar: async (id: string) => {
         const now = new Date().toISOString();
         const card = stateRef.current.cards.find((c) => c.id === id);
+        if (!card) return;
         setCards((cur) =>
-          cur.map((c) => (c.id === id ? { ...c, starred: !c.starred, updated_at: now } : c)),
+          cur.map((c) => (c.id === id ? { ...c, starred: !card.starred, updated_at: now } : c)),
         );
-        if (card) {
-          await kanbanRepo.tasks.update(id, { starred: !card.starred, updated_at: now });
-          slicesRef.current.logActivity(
-            id,
-            card.starred ? "unstarred" : "starred",
-            card.starred ? "Removido dos favoritos" : "Marcado como favorito",
-          );
+        const { error: starError } = await kanbanRepo.tasks.update(id, {
+          starred: !card.starred,
+          updated_at: now,
+        });
+        if (starError) {
+          // Rollback optimistic update; sem atividade registrada.
+          setCards((cur) => cur.map((c) => (c.id === id ? card : c)));
+          console.error("[toggleStar] Falha ao salvar no Supabase:", starError);
+          return;
         }
+        slicesRef.current.logActivity(
+          id,
+          card.starred ? "unstarred" : "starred",
+          card.starred ? "Removido dos favoritos" : "Marcado como favorito",
+        );
       },
 
       duplicateCard: async (id: string) => {
@@ -378,12 +459,9 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
 
       toggleCollapsed: (id: string) => setCollapsed((cur) => ({ ...cur, [id]: !cur[id] })),
 
-      getColumnsForTrack: (trackId: string) => {
-        const { columns } = stateRef.current;
-        const trackCols = columns.filter((c) => c.track_id === trackId);
-        if (trackCols.length > 0) return trackCols.sort((a, b) => a.order - b.order);
-        return columns.filter((c) => !c.track_id).sort((a, b) => a.order - b.order);
-      },
+      getColumnsForTrack: (trackId: string) => columnsForTrack(stateRef.current.columns, trackId),
+
+      reload: () => setReloadKey((k) => k + 1),
 
       createTrilha: async (t: Omit<Trilha, "id">) => {
         const userId = await kanbanRepo.getUserId();
@@ -399,16 +477,36 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       },
 
       updateTrilha: async (id: string, data: Omit<Trilha, "id">) => {
+        const snapshot = stateRef.current.trilhas.find((t) => t.id === id);
         setTrilhas((cur) => cur.map((t) => (t.id === id ? { ...t, ...data } : t)));
-        await kanbanRepo.trilhas.update(id, data);
+        const { error: updateError } = await kanbanRepo.trilhas.update(id, data);
+        if (updateError) {
+          // Rollback optimistic update.
+          if (snapshot) setTrilhas((cur) => cur.map((t) => (t.id === id ? snapshot : t)));
+          console.error("[updateTrilha] Falha ao salvar no Supabase:", updateError);
+        }
       },
 
       deleteTrilha: async (id: string) => {
+        const { trilhas: trilhasSnapshot, cards: cardsSnapshot } = stateRef.current;
         setTrilhas((cur) => cur.filter((t) => t.id !== id));
         setCards((cur) => cur.map((c) => ({ ...c, tags: c.tags.filter((x) => x !== id) })));
         setFilter((f) => (f === id ? "__all" : f));
-        await kanbanRepo.trilhas.remove(id);
-        await kanbanRepo.trilhas.removeTagFromTasks(id);
+        // Cascata sem transação: se um passo falha, o seguinte não roda e o
+        // estado local volta ao que o banco tem.
+        const { error: removeError } = await kanbanRepo.trilhas.remove(id);
+        if (removeError) {
+          setTrilhas(trilhasSnapshot);
+          setCards(cardsSnapshot);
+          console.error("[deleteTrilha] Falha ao salvar no Supabase:", removeError);
+          return;
+        }
+        const { error: tagError } = await kanbanRepo.trilhas.removeTagFromTasks(id);
+        if (tagError) {
+          // A trilha já saiu do banco, mas os cards ainda têm a tag lá.
+          setCards(cardsSnapshot);
+          console.error("[deleteTrilha] Falha ao remover a tag dos cards:", tagError);
+        }
       },
 
       createTrack: async (input: Parameters<KanbanCtx["createTrack"]>[0]) => {
@@ -436,10 +534,16 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       },
 
       updateTrack: async (id: string, data: Omit<Track, "id">) => {
+        const snapshot = stateRef.current.tracks;
         setTracks((cur) =>
           cur.map((t) => (t.id === id ? { ...t, ...data } : t)).sort((a, b) => a.order - b.order),
         );
-        await kanbanRepo.tracks.update(id, data);
+        const { error: updateError } = await kanbanRepo.tracks.update(id, data);
+        if (updateError) {
+          // Rollback optimistic update.
+          setTracks(snapshot);
+          console.error("[updateTrack] Falha ao salvar no Supabase:", updateError);
+        }
       },
 
       reorderTrack: async (id: string, targetId: string, position: "before" | "after") => {
@@ -457,27 +561,54 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
         if (failed) {
           setTracks(snapshot);
           console.error("[reorderTrack] Falha ao salvar no Supabase:", failed.error);
+          // As que salvaram voltam ao order antigo (melhor esforço), para o banco
+          // não ficar com a renumeração pela metade (orders repetidos).
+          const saved = changed.filter((_, i) => !results[i].error);
+          await Promise.all(
+            saved.map((t) => kanbanRepo.tracks.updateOrder(t.id, prevOrder.get(t.id) ?? t.order)),
+          );
         }
       },
 
       deleteTrack: async (id: string) => {
-        const { cards, tracks } = stateRef.current;
+        const { cards, tracks, columns } = stateRef.current;
         const now = new Date().toISOString();
-        const result = computeTrackDeletion(cards, tracks, id, now);
+        const result = computeTrackDeletion(cards, tracks, columns, id, now);
         setCards(result.cards);
         setTracks(result.remaining);
+        // Cascata sem transação: se um passo falha, o seguinte não roda e o
+        // estado local volta ao que o banco tem.
+        if (result.fallbackId) {
+          const failedIds = await persistMovedCards(result.cards, result.movedCardIds);
+          if (failedIds.size > 0) {
+            // Os que salvaram já estão na track de destino no banco; só os que
+            // falharam voltam (e a track volta a existir).
+            setCards((cur) => cur.map((c) => (failedIds.has(c.id) ? snapshotOf(cards, c) : c)));
+            setTracks(tracks);
+            return;
+          }
+        } else {
+          const { error: cardsError } = await kanbanRepo.tasks.deleteByTrack(id);
+          if (cardsError) {
+            setCards(cards);
+            setTracks(tracks);
+            console.error("[deleteTrack] Falha ao apagar os cards:", cardsError);
+            return;
+          }
+        }
+        const { error: removeError } = await kanbanRepo.tracks.remove(id);
+        if (removeError) {
+          // Cards já foram movidos/apagados no banco: mantém isso, só a track volta.
+          setTracks(tracks);
+          console.error("[deleteTrack] Falha ao salvar no Supabase:", removeError);
+          return;
+        }
         setSelectedAreaIds((ids) => ids.filter((areaId) => areaId !== id));
         setCollapsed((cur) => {
           const next = { ...cur };
           delete next[id];
           return next;
         });
-        if (result.fallbackId) {
-          await kanbanRepo.tasks.reassignTrack(id, result.fallbackId, now);
-        } else {
-          await kanbanRepo.tasks.deleteByTrack(id);
-        }
-        await kanbanRepo.tracks.remove(id);
       },
 
       createColumn: async (name: string, trackId?: string) => {
@@ -510,6 +641,7 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       },
 
       updateColumn: async (id: string, data: { name?: string; wip_limit?: number | null }) => {
+        const snapshot = stateRef.current.columns;
         const patch: Record<string, unknown> = {};
         if (data.name !== undefined) patch.name = data.name.trim();
         if (data.wip_limit !== undefined) patch.wip_limit = data.wip_limit;
@@ -526,7 +658,12 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
               : c,
           ),
         );
-        await kanbanRepo.columns.update(id, patch);
+        const { error: updateError } = await kanbanRepo.columns.update(id, patch);
+        if (updateError) {
+          // Rollback optimistic update.
+          setColumns(snapshot);
+          console.error("[updateColumn] Falha ao salvar no Supabase:", updateError);
+        }
       },
 
       deleteColumn: async (id: string) => {
@@ -535,12 +672,40 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
         const result = computeColumnDeletion(cards, columns, id, now);
         setCards(result.cards);
         setColumns(result.remaining);
-        if (result.fallbackId) {
-          await kanbanRepo.tasks.reassignColumn(id, result.fallbackId, now);
-        } else {
-          await kanbanRepo.tasks.deleteByColumn(id);
+        // Cascata sem transação: se um passo falha, o seguinte não roda e o
+        // estado local volta ao que o banco tem.
+        const failedIds = await persistMovedCards(result.cards, result.movedCardIds);
+        if (failedIds.size > 0) {
+          // Os que salvaram já estão na coluna de destino no banco; os que
+          // falharam voltam, e nada é apagado.
+          setCards((cur) => {
+            const restored = cur.map((c) => (failedIds.has(c.id) ? snapshotOf(cards, c) : c));
+            const gone = cards.filter((c) => result.deletedCardIds.includes(c.id));
+            return [...restored, ...gone];
+          });
+          setColumns(columns);
+          return;
         }
-        await kanbanRepo.columns.remove(id);
+        const deleteResults = await Promise.all(
+          result.deletedCardIds.map((cardId) => kanbanRepo.tasks.remove(cardId)),
+        );
+        const deleteFailed = deleteResults.find((r) => r.error);
+        if (deleteFailed) {
+          // Os movidos ficam; volta a coluna e os cards cuja remoção falhou.
+          const notDeleted = new Set(
+            result.deletedCardIds.filter((_, i) => deleteResults[i].error),
+          );
+          setCards((cur) => [...cur, ...cards.filter((c) => notDeleted.has(c.id))]);
+          setColumns(columns);
+          console.error("[deleteColumn] Falha ao apagar os cards:", deleteFailed.error);
+          return;
+        }
+        const { error: removeError } = await kanbanRepo.columns.remove(id);
+        if (removeError) {
+          // Cards já foram movidos/apagados no banco: mantém isso, só a coluna volta.
+          setColumns(columns);
+          console.error("[deleteColumn] Falha ao salvar no Supabase:", removeError);
+        }
       },
 
       // Pass-throughs estáveis para os slices (delegam via ref → sempre frescos).
@@ -571,6 +736,24 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Rotinas: uma vez por login, depois que áreas e colunas carregaram, cria os
+  // cards das rotinas do dia. A reserva no banco evita duplicar entre abas.
+  const routinesRanForRef = useRef<string | null>(null);
+  useEffect(() => {
+    // tracks vazio = load ainda em voo (ex.: login sem reload não volta
+    // loading para true). Sem áreas também não há o que gerar.
+    if (loading || !user || tracks.length === 0) return;
+    if (routinesRanForRef.current === user.id) return;
+    routinesRanForRef.current = user.id;
+    void generateDueRoutineCards({
+      trackIds: new Set(stateRef.current.tracks.map((t) => t.id)),
+      firstColumnFor: (trackId) => actions.getColumnsForTrack(trackId)[0]?.id,
+      addCard: actions.addCard,
+    });
+    // Chaveado por user?.id (primitivo estável), como o load acima.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user?.id, actions, tracks.length]);
+
   // `value` agrega DADOS reativos + setters (estáveis) + ações (estáveis).
   // Recria quando algum dado muda — que é exatamente quando os consumidores
   // precisam ver a mudança. Todas as deps são valores reativos reais: o
@@ -589,6 +772,7 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       selectedAreaIds,
       setSelectedAreaIds,
       loading,
+      loadError,
       createOpen,
       setCreateOpen,
       templates,
@@ -610,6 +794,7 @@ export function KanbanProvider({ children }: { children: ReactNode }) {
       selectedAreaIds,
       createOpen,
       loading,
+      loadError,
       templates,
       cardColors,
       activitiesByCard,

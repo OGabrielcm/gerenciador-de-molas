@@ -47,6 +47,14 @@ export function useCardDetails() {
     setAttachmentsByCard((cur) => ({ ...cur, [cardId]: atts }));
   };
 
+  // Troca de usuário/logout: descarta os detalhes carregados da conta anterior.
+  const resetCardDetails = () => {
+    setActivitiesByCard({});
+    setCommentsByCard({});
+    setTimeLogsByCard({});
+    setAttachmentsByCard({});
+  };
+
   const addComment = async (cardId: string, text: string) => {
     const {
       data: { user },
@@ -95,6 +103,7 @@ export function useCardDetails() {
     currentUserIdRef,
     logActivity,
     loadCardDetails,
+    resetCardDetails,
     addComment,
     updateComment,
     deleteComment,

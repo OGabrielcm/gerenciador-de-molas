@@ -32,12 +32,15 @@ function ForYouPage() {
   const recent = useMemo(() => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return [...cards]
-      .filter((c) => !isArchived(c) && new Date(c.updated_at).getTime() >= cutoff)
+      .filter((c) => !isArchived(c, columns) && new Date(c.updated_at).getTime() >= cutoff)
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
       .slice(0, 12);
-  }, [cards]);
+  }, [cards, columns]);
 
-  const starred = useMemo(() => cards.filter((c) => c.starred && !isArchived(c)), [cards]);
+  const starred = useMemo(
+    () => cards.filter((c) => c.starred && !isArchived(c, columns)),
+    [cards, columns],
+  );
   const open = openId ? (cards.find((c) => c.id === openId) ?? null) : null;
 
   const renderGrid = (list: typeof cards) => (
@@ -94,7 +97,6 @@ function ForYouPage() {
           card={open}
           allCards={cards}
           tracks={tracks}
-          columns={columns}
           trilhas={trilhas}
           onClose={() => setOpenId(null)}
           onMove={moveCard}

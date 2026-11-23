@@ -5,6 +5,7 @@ export interface HabitsCtx {
   habits: Habit[];
   logsByHabit: Record<string, HabitLog[]>;
   loading: boolean;
+  error: Error | null;
   addHabit: (name: string, color: string, frequency: Frequency) => Promise<void>;
   deleteHabit: (habitId: string) => Promise<void>;
   toggleLog: (habitId: string, date: string) => Promise<void>;

@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { toLocalIso } from "./date-utils";
 import type { TimeLog } from "./kanban-types";
 
 type SetTimeLogs = React.Dispatch<React.SetStateAction<Record<string, TimeLog[]>>>;
@@ -28,7 +29,7 @@ export async function addTimeLog(
       user_id: userId,
       minutes,
       note: note?.trim() || null,
-      logged_at: loggedAt ?? new Date().toISOString().slice(0, 10),
+      logged_at: loggedAt ?? toLocalIso(new Date()),
     })
     .select()
     .single();
@@ -45,9 +46,24 @@ export async function deleteTimeLog(
   logId: string,
   cardId: string,
 ): Promise<void> {
-  setTimeLogs((cur) => ({
-    ...cur,
-    [cardId]: (cur[cardId] ?? []).filter((l) => l.id !== logId),
-  }));
-  await supabase.from("time_logs").delete().eq("id", logId);
+  let removed: TimeLog | undefined;
+  setTimeLogs((cur) => {
+    removed = (cur[cardId] ?? []).find((l) => l.id === logId);
+    return {
+      ...cur,
+      [cardId]: (cur[cardId] ?? []).filter((l) => l.id !== logId),
+    };
+  });
+  const { error } = await supabase.from("time_logs").delete().eq("id", logId);
+  if (error && removed) {
+    // rollback: devolve o registro (ordem logged_at desc)
+    console.error("Falha ao excluir registro de tempo:", error);
+    const restored = removed;
+    setTimeLogs((cur) => ({
+      ...cur,
+      [cardId]: [...(cur[cardId] ?? []).filter((l) => l.id !== logId), restored].sort((a, b) =>
+        b.logged_at.localeCompare(a.logged_at),
+      ),
+    }));
+  }
 }

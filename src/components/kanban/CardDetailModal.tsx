@@ -13,7 +13,6 @@ import {
 import {
   Card,
   ChecklistItem,
-  Column,
   ColumnId,
   PRIORITIES,
   PRIO_COLORS,
@@ -60,7 +59,6 @@ export function CardDetailModal({
   card,
   allCards,
   tracks,
-  columns,
   trilhas,
   onClose,
   onMove,
@@ -75,7 +73,6 @@ export function CardDetailModal({
   card: Card;
   allCards: Card[];
   tracks: Track[];
-  columns: Column[];
   trilhas: Trilha[];
   onClose: () => void;
   onMove: (id: string, col: ColumnId, track?: TrackId) => void;
@@ -96,8 +93,17 @@ export function CardDetailModal({
   const [editDesc, setEditDesc] = useState(card.desc ?? "");
   const { theme } = useTheme();
   const { t } = useLocale();
-  const { loadCardDetails, commentsByCard, activitiesByCard, timeLogsByCard, attachmentsByCard } =
-    useKanban();
+  const {
+    loadCardDetails,
+    commentsByCard,
+    activitiesByCard,
+    timeLogsByCard,
+    attachmentsByCard,
+    getColumnsForTrack,
+    columns,
+  } = useKanban();
+  // Só as colunas da área (track) do card — colunas de outras áreas não fazem sentido aqui.
+  const trackColumns = getColumnsForTrack(card.track);
 
   const checklistProg = getChecklistProgress(card);
 
@@ -349,7 +355,7 @@ export function CardDetailModal({
             {/* Goal progress */}
             {card.type === "Goal" &&
               (() => {
-                const progress = getGoalProgress(card, allCards);
+                const progress = getGoalProgress(card, allCards, columns);
                 return (
                   <div className="mb-5">
                     <div className="flex items-center justify-between mb-1.5">
@@ -502,7 +508,9 @@ export function CardDetailModal({
                   onChange={(e) => onUpdate(card.id, { date: e.target.value || undefined })}
                   className="rounded border bg-background px-2 py-1 text-xs outline-none focus:border-foreground/40"
                   style={{
-                    color: card.date ? getDeadlineColor(getDeadlineStatus(card)) : undefined,
+                    color: card.date
+                      ? getDeadlineColor(getDeadlineStatus(card, columns))
+                      : undefined,
                   }}
                 />
                 {card.date && (
@@ -555,7 +563,7 @@ export function CardDetailModal({
                 {t("move_to_column")}
               </p>
               <div className="flex flex-wrap gap-1">
-                {columns
+                {trackColumns
                   .filter((c) => c.id !== card.col)
                   .map((c) => (
                     <button
@@ -588,7 +596,13 @@ export function CardDetailModal({
                         <button
                           key={tr.id}
                           onClick={() => {
-                            onMove(card.id, card.col, tr.id);
+                            // A coluna atual pode não existir na área de destino:
+                            // nesse caso o card vai para a primeira coluna dela.
+                            const targetCols = getColumnsForTrack(tr.id);
+                            const col = targetCols.some((c) => c.id === card.col)
+                              ? card.col
+                              : (targetCols[0]?.id ?? card.col);
+                            onMove(card.id, col, tr.id);
                             onClose();
                           }}
                           className="rounded px-2 py-1 text-xs font-medium hover:opacity-80"

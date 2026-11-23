@@ -5,6 +5,7 @@ import {
   computeColumnDeletion,
   getVisibleTracks,
   computeTrackReorder,
+  isDueTodayOrOverdue,
 } from "./kanban-logic";
 import type { Card, Column, Track } from "../kanban-types";
 
@@ -147,7 +148,7 @@ describe("computeTrackDeletion", () => {
   it("reassigns orphan cards to the first remaining track", () => {
     const tracks = [makeTrack({ id: "t1" }), makeTrack({ id: "t2" })];
     const cards = [makeCard({ id: "a", track: "t1" }), makeCard({ id: "b", track: "t2" })];
-    const res = computeTrackDeletion(cards, tracks, "t1", NOW);
+    const res = computeTrackDeletion(cards, tracks, [], "t1", NOW);
 
     expect(res.remaining).toEqual([makeTrack({ id: "t2" })]);
     expect(res.fallbackId).toBe("t2");
@@ -161,10 +162,49 @@ describe("computeTrackDeletion", () => {
     });
   });
 
+  it("moves orphans to a column the destination area shows, at the end of it", () => {
+    const tracks = [makeTrack({ id: "t1" }), makeTrack({ id: "t2", order: 1 })];
+    const columns = [
+      makeColumn({ id: "t1-todo", order: 0, track_id: "t1" }),
+      makeColumn({ id: "t2-todo", order: 0, track_id: "t2" }),
+      makeColumn({ id: "t2-done", order: 1, track_id: "t2" }),
+    ];
+    const cards = [
+      makeCard({ id: "x", track: "t2", col: "t2-todo", order: 4 }),
+      makeCard({ id: "a", track: "t1", col: "t1-todo", order: 2 }),
+      makeCard({ id: "b", track: "t1", col: "t1-todo", order: 1 }),
+    ];
+    const res = computeTrackDeletion(cards, tracks, columns, "t1", NOW);
+
+    // Coluna "t1-todo" não existe na área t2 → primeira coluna de t2, depois
+    // do "x" (order 4), preservando a ordem relativa b(1) < a(2).
+    expect(res.cards.find((c) => c.id === "b")).toMatchObject({
+      track: "t2",
+      col: "t2-todo",
+      order: 5,
+    });
+    expect(res.cards.find((c) => c.id === "a")).toMatchObject({
+      track: "t2",
+      col: "t2-todo",
+      order: 6,
+    });
+    expect(res.cards.find((c) => c.id === "x")).toMatchObject({ order: 4 });
+  });
+
+  it("keeps the card's column when it also exists in the destination area", () => {
+    const tracks = [makeTrack({ id: "t1" }), makeTrack({ id: "t2", order: 1 })];
+    // Sem colunas próprias: as duas áreas usam as globais.
+    const columns = [makeColumn({ id: "todo", order: 0 }), makeColumn({ id: "done", order: 1 })];
+    const cards = [makeCard({ id: "a", track: "t1", col: "done", order: 7 })];
+    const res = computeTrackDeletion(cards, tracks, columns, "t1", NOW);
+
+    expect(res.cards[0]).toMatchObject({ track: "t2", col: "done", order: 1 });
+  });
+
   it("deletes orphan cards when no track remains", () => {
     const tracks = [makeTrack({ id: "t1" })];
     const cards = [makeCard({ id: "a", track: "t1" }), makeCard({ id: "b", track: "t1" })];
-    const res = computeTrackDeletion(cards, tracks, "t1", NOW);
+    const res = computeTrackDeletion(cards, tracks, [], "t1", NOW);
 
     expect(res.remaining).toEqual([]);
     expect(res.fallbackId).toBeNull();
@@ -177,7 +217,7 @@ describe("computeTrackDeletion", () => {
     const tracks = [makeTrack({ id: "t1" }), makeTrack({ id: "t2" })];
     const cards = [makeCard({ id: "a", track: "t1" })];
     const cardsBefore = structuredClone(cards);
-    computeTrackDeletion(cards, tracks, "t1", NOW);
+    computeTrackDeletion(cards, tracks, [], "t1", NOW);
     expect(cards).toEqual(cardsBefore);
   });
 });
@@ -185,23 +225,46 @@ describe("computeTrackDeletion", () => {
 // ── computeColumnDeletion ─────────────────────────────────────────────────────
 
 describe("computeColumnDeletion", () => {
-  it("reassigns orphan cards to the first remaining column", () => {
+  it("reassigns orphan cards to the first remaining column, at its end", () => {
     const columns = [makeColumn({ id: "todo" }), makeColumn({ id: "done", order: 2 })];
-    const cards = [makeCard({ id: "a", col: "todo" }), makeCard({ id: "b", col: "done" })];
+    const cards = [
+      makeCard({ id: "a", col: "todo", order: 1 }),
+      makeCard({ id: "b", col: "done", order: 3 }),
+    ];
     const res = computeColumnDeletion(cards, columns, "todo", NOW);
 
     expect(res.fallbackId).toBe("done");
     expect(res.movedCardIds).toEqual(["a"]);
     expect(res.deletedCardIds).toEqual([]);
-    expect(res.cards.find((c) => c.id === "a")).toMatchObject({ col: "done", updated_at: NOW });
+    expect(res.cards.find((c) => c.id === "a")).toMatchObject({
+      col: "done",
+      order: 4,
+      updated_at: NOW,
+    });
   });
 
-  it("deletes orphan cards when no column remains", () => {
+  it("resolves the destination per card area, not globally", () => {
+    // Área t1 tem colunas próprias; t2 usa as globais. A primeira coluna da
+    // lista global ("g-todo") não é válida para os cards de t1.
+    const columns = [
+      makeColumn({ id: "g-todo", order: 0 }),
+      makeColumn({ id: "t1-a", order: 0, track_id: "t1" }),
+      makeColumn({ id: "t1-b", order: 1, track_id: "t1" }),
+    ];
+    const cards = [makeCard({ id: "a", track: "t1", col: "t1-a" })];
+    const res = computeColumnDeletion(cards, columns, "t1-a", NOW);
+
+    expect(res.fallbackId).toBe("t1-b");
+    expect(res.cards[0]).toMatchObject({ track: "t1", col: "t1-b" });
+  });
+
+  it("deletes orphan cards when their area has no column left", () => {
     const columns = [makeColumn({ id: "todo" })];
     const cards = [makeCard({ id: "a", col: "todo" })];
     const res = computeColumnDeletion(cards, columns, "todo", NOW);
 
     expect(res.fallbackId).toBeNull();
+    expect(res.movedCardIds).toEqual([]);
     expect(res.deletedCardIds).toEqual(["a"]);
     expect(res.cards).toEqual([]);
   });
@@ -276,5 +339,28 @@ describe("computeTrackReorder", () => {
       makeTrack({ id: "b", order: 5 }),
     ];
     expect(ids(computeTrackReorder(messy, "a", "b", "after"))).toEqual(["b:0", "a:1", "c:2"]);
+  });
+});
+
+describe("isDueTodayOrOverdue", () => {
+  const today = "2026-11-23";
+
+  it("inclui card com prazo hoje, mesmo concluído", () => {
+    expect(isDueTodayOrOverdue(makeCard({ date: today }), today, [])).toBe(true);
+    expect(isDueTodayOrOverdue(makeCard({ date: today, col: "done" }), today, [])).toBe(true);
+  });
+
+  it("inclui vencido não concluído e exclui vencido concluído", () => {
+    expect(isDueTodayOrOverdue(makeCard({ date: "2026-11-20", col: "todo" }), today, [])).toBe(
+      true,
+    );
+    expect(isDueTodayOrOverdue(makeCard({ date: "2026-11-20", col: "done" }), today, [])).toBe(
+      false,
+    );
+  });
+
+  it("exclui card sem prazo ou com prazo futuro", () => {
+    expect(isDueTodayOrOverdue(makeCard({ date: undefined }), today, [])).toBe(false);
+    expect(isDueTodayOrOverdue(makeCard({ date: "2026-11-24" }), today, [])).toBe(false);
   });
 });

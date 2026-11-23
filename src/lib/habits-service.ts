@@ -5,21 +5,30 @@ type SetHabits = React.Dispatch<React.SetStateAction<Habit[]>>;
 type SetLogs = React.Dispatch<React.SetStateAction<Record<string, HabitLog[]>>>;
 
 export async function fetchHabits(): Promise<Habit[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("habits")
     .select("*")
     .eq("archived", false)
     .order("created_at", { ascending: true });
+  if (error) throw error;
   return (data ?? []) as Habit[];
 }
 
-export async function fetchLogs(habitId: string): Promise<HabitLog[]> {
-  const { data } = await supabase
+// Uma única query para todos os hábitos (evita N+1); agrupa por habit_id no cliente.
+export async function fetchLogsForHabits(habitIds: string[]): Promise<Record<string, HabitLog[]>> {
+  const map: Record<string, HabitLog[]> = {};
+  for (const id of habitIds) map[id] = [];
+  if (habitIds.length === 0) return map;
+  const { data, error } = await supabase
     .from("habit_logs")
     .select("*")
-    .eq("habit_id", habitId)
+    .in("habit_id", habitIds)
     .order("date", { ascending: false });
-  return (data ?? []) as HabitLog[];
+  if (error) throw error;
+  for (const log of (data ?? []) as HabitLog[]) {
+    (map[log.habit_id] ??= []).push(log);
+  }
+  return map;
 }
 
 export async function addHabit(
@@ -45,6 +54,8 @@ export async function deleteHabit(
   setHabits: SetHabits,
   setLogs: SetLogs,
   habitId: string,
+  previousHabit: Habit | undefined,
+  previousLogs: HabitLog[],
 ): Promise<void> {
   // Otimista: some da lista e limpa os logs locais; cascade no DB apaga as rows.
   setHabits((cur) => cur.filter((h) => h.id !== habitId));
@@ -53,7 +64,19 @@ export async function deleteHabit(
     delete next[habitId];
     return next;
   });
-  await supabase.from("habits").delete().eq("id", habitId);
+  const { error } = await supabase.from("habits").delete().eq("id", habitId);
+  if (error) {
+    // rollback: restaura o hábito (na ordem de criação) e seus logs
+    console.error("Falha ao excluir hábito:", error);
+    if (previousHabit) {
+      setHabits((cur) =>
+        [...cur.filter((h) => h.id !== habitId), previousHabit].sort((a, b) =>
+          a.created_at.localeCompare(b.created_at),
+        ),
+      );
+    }
+    setLogs((cur) => ({ ...cur, [habitId]: previousLogs }));
+  }
 }
 
 // Marca/desmarca o hábito num dia. A PRESENÇA da row = feito. Se já existe log
@@ -74,7 +97,15 @@ export async function toggleLog(
       ...cur,
       [habitId]: (cur[habitId] ?? []).filter((l) => l.date !== date),
     }));
-    await supabase.from("habit_logs").delete().eq("id", existing.id);
+    const { error } = await supabase.from("habit_logs").delete().eq("id", existing.id);
+    if (error) {
+      // rollback: devolve o log removido
+      console.error("Falha ao desmarcar hábito:", error);
+      setLogs((cur) => ({
+        ...cur,
+        [habitId]: [existing, ...(cur[habitId] ?? []).filter((l) => l.id !== existing.id)],
+      }));
+    }
   } else {
     // marcar — insere e troca pelo row real
     const tempId = crypto.randomUUID();

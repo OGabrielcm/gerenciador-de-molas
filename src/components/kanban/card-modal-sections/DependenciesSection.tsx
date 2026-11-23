@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { X, Plus, Link2, AlertTriangle } from "lucide-react";
 import type { Card } from "@/lib/kanban-types";
-import { isBlocked } from "@/lib/kanban-types";
+import { isBlocked, isDoneCard } from "@/lib/kanban-types";
+import { useKanban } from "@/lib/kanban-store";
 import { useLocale } from "@/lib/locale-context";
 
 export function DependenciesSection({
@@ -14,6 +15,7 @@ export function DependenciesSection({
   onUpdate: (blockedBy: string[]) => void;
 }) {
   const { t } = useLocale();
+  const { columns } = useKanban();
   const blockedBy = card.blocked_by ?? [];
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -22,7 +24,7 @@ export function DependenciesSection({
     .map((id) => allCards.find((c) => c.id === id))
     .filter((c): c is Card => Boolean(c));
 
-  const blocked = isBlocked(card, allCards);
+  const blocked = isBlocked(card, allCards, columns);
 
   const available = allCards
     .filter(
@@ -60,7 +62,7 @@ export function DependenciesSection({
 
       <div className="space-y-1">
         {blockers.map((b) => {
-          const resolved = b.col === "done";
+          const resolved = isDoneCard(b, columns);
           return (
             <div
               key={b.id}

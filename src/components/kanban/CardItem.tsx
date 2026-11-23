@@ -25,6 +25,7 @@ import {
   formatDate,
 } from "@/lib/kanban-types";
 import { useTheme } from "@/components/theme-provider";
+import { useKanban } from "@/lib/kanban-store";
 
 export function CardItem({
   card,
@@ -57,15 +58,16 @@ export function CardItem({
   onDelete?: (id: string) => void;
 }) {
   const { theme } = useTheme();
+  const { columns } = useKanban();
   const prioRaw = PRIO_COLORS[card.prio];
   const prio =
     theme === "dark"
       ? { bg: prioRaw.darkBg, fg: prioRaw.darkFg }
       : { bg: prioRaw.bg, fg: prioRaw.fg };
   const isGoal = card.type === "Goal";
-  const deadlineStatus = getDeadlineStatus(card);
+  const deadlineStatus = getDeadlineStatus(card, columns);
   const checklistProgress = getChecklistProgress(card);
-  const blocked = isBlocked(card, allCards);
+  const blocked = isBlocked(card, allCards, columns);
 
   const touchRef = useRef<{ startX: number; startY: number; dragging: boolean } | null>(null);
   const justDraggedRef = useRef(false);
@@ -263,7 +265,7 @@ export function CardItem({
 
         {isGoal &&
           (() => {
-            const progress = getGoalProgress(card, allCards);
+            const progress = getGoalProgress(card, allCards, columns);
             if (progress.total === 0) return null;
             return (
               <div className="mt-2">
